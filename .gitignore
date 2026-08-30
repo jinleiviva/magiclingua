@@ -1,0 +1,30 @@
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ----- 运行时产物（不要进版本库）-----
+models/
+pdf_jobs/
+config.json
+log_server.txt
+debug_config.log
+.server.pid
+*.log
+
+# ----- 杂项残留 -----
+*.bak
+native_host/hymt_root.txt
+
+# ----- 扩展构建产物 / 私钥 -----
+extension.pem
+*.crx
+
+# ----- 系统文件 -----
+.DS_Store
+
+# ----- 工作区助手记忆（含个人信息，禁止入库）-----
+.workbuddy/

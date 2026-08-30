@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MagicLingua · 插件面板预览</title>
+<link rel="stylesheet" href="extension/popup.css">
+<style>
+  html { background: #dcdce1; }
+  @media (prefers-color-scheme: dark) { html { background: #0f0f11; } }
+  body {
+    margin: 0; min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 20px; padding: 40px 20px;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  }
+  .frames { display: flex; gap: 40px; flex-wrap: wrap; justify-content: center; }
+  .col { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .col > .cap { font-size: 12px; color: #6b6f7e; }
+  .frame {
+    width: 360px;
+    background: var(--canvas, #fff);
+    border-radius: 20px; overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,.28), 0 0 0 1px rgba(0,0,0,.08);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    font-size: 13px;
+    color: var(--ink, #1c1c1e);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* 强制浅色/深色，便于同时对比两套主题 */
+  .frame.light { color-scheme: light; }
+  .frame.dark  { color-scheme: dark; --canvas:#050038; --surface:#191448; --surface-2:#1e1a4c;
+                 --ink:#fff; --ink-soft:#a5a8b5; --ink-muted:#7c7f8c; --line:#26215e; --line-soft:#26215e;
+                 --yellow:#ffd02f; --yellow-light:#26215e; --surface-yellow:#26215e; --yellow-dark:#ffd02f;
+                 --blue:#5b76fe; --teal:#2ed9c3; --teal-light:#10352f; --teal-dark:#2ed9c3;
+                 --coral-light:#3a1a18; --coral-dark:#ff9a95; --danger:#ff9a95; }
+  .frame.dark .fav { background: #26215e; }
+  .note {
+    font-size: 13px; color: #55555c; text-align: center; line-height: 1.7;
+    max-width: 520px;
+  }
+  @media (prefers-color-scheme: dark) { .note { color: #98989f; } }
+</style>
+</head>
+<body>
+  <div class="frames">
+
+    <div class="col">
+      <div class="cap">浅色</div>
+      <div class="frame light">
+        <header class="hd">
+          <div class="brand">
+            <span class="logo">
+              <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+                <path d="M7 10H15M11 10V18M11 10L7.5 18M11 10L14.5 18" stroke="#1C1C1E" stroke-width="1.7"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <h1>MagicLingua</h1>
+          </div>
+          <div class="status status-online">
+            <span class="dot"></span><span>运行正常</span>
+          </div>
+        </header>
+        <div class="divider"></div>
+        <main class="body">
+          <div class="site-row">
+            <div class="site-left">
+              <span class="fav"><svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M5 3h7l4 4v12H5z" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M12 3v4h4" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span class="domain">reuters.com</span>
+            </div>
+            <label class="switch"><input type="checkbox" checked><span class="track"><span class="knob"></span></span></label>
+          </div>
+          <button class="cta">翻译本页</button>
+          <section class="card">
+            <div class="row">
+              <label class="pill"><span>启用翻译</span><span class="switch sm">
+                <input type="checkbox" checked><span class="track"><span class="knob"></span></span></span></label>
+              <label class="chip"><span class="chip-lab">目标语言</span><select><option>中文</option></select></label>
+            </div>
+            <div class="row">
+              <label class="chip"><span class="chip-lab">网页显示</span><select><option>原文 + 译文</option></select></label>
+              <label class="pill"><span>双语字幕</span><span class="switch sm">
+                <input type="checkbox"><span class="track"><span class="knob"></span></span></span></label>
+            </div>
+            <div class="row">
+              <label class="pill"><span>PDF 对照</span><span class="switch sm">
+                <input type="checkbox" checked><span class="track"><span class="knob"></span></span></span></label>
+              <div class="slider">
+                <div class="sl-top"><span>字幕字号</span><span>24px</span></div>
+                <input type="range" min="14" max="40" step="2" value="24">
+              </div>
+            </div>
+          </section>
+          <section class="card svc">
+            <div class="svc-top">
+              <span class="svc-dot"></span>
+              <span class="svc-text"><span>运行中</span><span>空闲 20 分钟自动退出（还有 18 分钟）</span></span>
+              <button class="btn-ghost is-danger">停止</button>
+            </div>
+            <input type="text" class="addr" value="http://localhost:18770">
+          </section>
+          <a class="pdf-row" href="javascript:void(0)">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M4 2h6l4 4v10H4z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M10 2v4h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>打开 PDF 翻译页</span>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M6 3.5 10.5 8 6 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+        </main>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="cap">深色</div>
+      <div class="frame dark">
+        <header class="hd">
+          <div class="brand">
+            <span class="logo">
+              <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+                <path d="M7 10H15M11 10V18M11 10L7.5 18M11 10L14.5 18" stroke="#1C1C1E" stroke-width="1.7"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <h1>MagicLingua</h1>
+          </div>
+          <div class="status status-online">
+            <span class="dot"></span><span>运行正常</span>
+          </div>
+        </header>
+        <div class="divider"></div>
+        <main class="body">
+          <div class="site-row">
+            <div class="site-left">
+              <span class="fav"><svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M5 3h7l4 4v12H5z" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M12 3v4h4" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span class="domain">reuters.com</span>
+            </div>
+            <label class="switch"><input type="checkbox" checked><span class="track"><span class="knob"></span></span></label>
+          </div>
+          <button class="cta">翻译本页</button>
+          <section class="card">
+            <div class="row">
+              <label class="pill"><span>启用翻译</span><span class="switch sm">
+                <input type="checkbox" checked><span class="track"><span class="knob"></span></span></span></label>
+              <label class="chip"><span class="chip-lab">目标语言</span><select><option>中文</option></select></label>
+            </div>
+            <div class="row">
+              <label class="chip"><span class="chip-lab">网页显示</span><select><option>原文 + 译文</option></select></label>
+              <label class="pill"><span>双语字幕</span><span class="switch sm">
+                <input type="checkbox"><span class="track"><span class="knob"></span></span></span></label>
+            </div>
+            <div class="row">
+              <label class="pill"><span>PDF 对照</span><span class="switch sm">
+                <input type="checkbox" checked><span class="track"><span class="knob"></span></span></span></label>
+              <div class="slider">
+                <div class="sl-top"><span>字幕字号</span><span>24px</span></div>
+                <input type="range" min="14" max="40" step="2" value="24">
+              </div>
+            </div>
+          </section>
+          <section class="card svc">
+            <div class="svc-top">
+              <span class="svc-dot"></span>
+              <span class="svc-text"><span>运行中</span><span>空闲 20 分钟自动退出（还有 18 分钟）</span></span>
+              <button class="btn-ghost is-danger">停止</button>
+            </div>
+            <input type="text" class="addr" value="http://localhost:18770">
+          </section>
+          <a class="pdf-row" href="javascript:void(0)">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M4 2h6l4 4v10H4z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M10 2v4h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>打开 PDF 翻译页</span>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M6 3.5 10.5 8 6 12.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+        </main>
+      </div>
+    </div>
+
+  </div>
+  <p class="note">
+    插件面板预览（<b>360 × ~500px</b>，一屏无滚动）。<br>
+    左：浅色主题 · 右：深色主题（深靛蓝 #050038）。<br>
+    实际面板跟随系统外观自动切换。
+  </p>
+</body>
+</html>

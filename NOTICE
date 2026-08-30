@@ -1,0 +1,16 @@
+MagicLingua / HY-MT 本地翻译
+
+本项目代码基于 MIT 许可证发布，详见 LICENSE。
+
+本项目使用的翻译模型（HY-MT / Hy-MT 系列）基于以下许可协议：
+Tencent HY is licensed under the Tencent HY Community License Agreement,
+Copyright © 2025 Tencent. All Rights Reserved. The trademark rights of
+"Tencent HY" are owned by Tencent or its affiliate.
+
+完整模型许可文本见 MODEL_LICENSE.txt。
+
+地域限制：Tencent HY Community License Agreement 不适用于欧盟、英国、韩国。
+请勿在上述地区分发或使用本软件及模型。
+
+商标披露：本软件并非由腾讯发布或背书。任何第三方在部署本软件时，
+须向最终用户明确披露实际提供方，并不得使人误认为与腾讯存在关联或赞助关系。

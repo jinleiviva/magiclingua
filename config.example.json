@@ -1,0 +1,33 @@
+{
+    "source_lang": "auto",
+    "target_lang": "zh",
+    "font_size": 28,
+    "theme_mode": "dark",
+    "display_mode": "append",
+    "bilingual_subtitle": false,
+    "stream_output": true,
+    "pdf_engine": "babeldoc",
+    "pdf_qps": 3,
+    "enabled_websites": {
+        "youtube": true,
+        "twitter": true
+    },
+    "blacklist": [
+        "google.com",
+        "bing.com",
+        "baidu.com",
+        "duckduckgo.com",
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "github.com",
+        "gitlab.com",
+        "stackoverflow.com",
+        "npmjs.com",
+        "figma.com",
+        "canva.com",
+        "notion.so",
+        "sheets.google.com",
+        "docs.google.com"
+    ]
+}
