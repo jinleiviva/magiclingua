@@ -89,7 +89,7 @@ Google News 这类信息流站点，标题就地翻译、原版式不乱，扫�
 环境要求：**Python 3.9+**（推荐 3.11+）、内存 4 GB+、磁盘约 3 GB。
 
 ```bash
-git clone <本仓库地址> && cd magiclingua
+git clone https://github.com/jinleiviva/magiclingua.git && cd magiclingua
 ./setup_env.sh          # 创建 venv 并安装真实最小依赖（Flask / llama-cpp-python / PyMuPDF / BabelDOC 等）
 ./download_model.sh     # 下载 Hy-MT2-1.8B GGUF（约 1.1 GB，默认走 hf-mirror 镜像）
 ./start_server_gguf.sh  # 启动服务，看到 ✅ 即成功；日志在 log_server.txt
