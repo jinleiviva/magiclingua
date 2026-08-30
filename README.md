@@ -1,30 +1,53 @@
-# MagicLingua
+<div align="center">
 
-**完全本地运行的浏览器翻译助手：网页整页翻译 · YouTube 双语字幕 · PDF 保留版面翻译。数据不出本机。**
+# 🚂 MagicLingua
 
-本地推理 · 隐私优先 · HY-MT 翻译模型 · GGUF 量化 · 33 种语言 · 按需启停 · **永久免费开源**
+**完全本地运行的浏览器翻译助手** — 网页整页翻译 · YouTube 双语字幕 · PDF 保留版面翻译
 
-![version](https://img.shields.io/badge/version-2.0.0-blue)
+本地推理 · 隐私优先 · HY-MT2 模型 · GGUF 量化 · 33 种语言 · 按需启停 · 永久免费开源
 
-![license](https://img.shields.io/badge/code%20license-MIT-green)
+[![version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/jinleiviva/magiclingua/releases)
+[![license](https://img.shields.io/badge/code%20license-MIT-green)](LICENSE)
+[![model](https://img.shields.io/badge/model-Hy--MT2--1.8B-orange)](https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF)
+[![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](README.md)
+[![price](https://img.shields.io/badge/%E4%BB%B7%E6%A0%BC-%E6%B0%B8%E4%B9%85%E5%85%8D%E8%B4%B9-brightgreen)](LICENSE)
 
-![model](https://img.shields.io/badge/model-Hy--MT2--1.8B-orange)
-
-![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
-
-![price](https://img.shields.io/badge/%E4%BB%B7%E6%A0%BC-%E6%B0%B8%E4%B9%85%E5%85%8D%E8%B4%B9-brightgreen)
+</div>
 
 > ⚠️ **地域限制**：翻译模型采用 *Tencent HY Community License Agreement*，**不适用于欧盟、英国、韩国**，请勿在上述地区使用或分发。模型许可全文见 [`MODEL_LICENSE.txt`](MODEL_LICENSE.txt)，商标与署名要求见 [`NOTICE`](NOTICE)。
 
+---
+
+## 📖 目录
+
+- [English Summary](#english-summary)
+- [为什么做这个项目](#为什么做这个项目)
+- [效果一览](#效果一览)
+- [核心能力](#核心能力)
+- [快速开始](#快速开始)
+- [使用指南](#使用指南)
+- [配置参考](#配置参考)
+- [常见问题](#常见问题)
+- [项目结构](#项目结构)
+- [参与贡献](#参与贡献)
+- [致谢](#致谢)
+- [许可证](#许可证)
+
+---
+
 ## English Summary
 
-MagicLingua is a fully local, privacy-first browser translation assistant: full-page web translation, YouTube bilingual subtitles, and layout-preserving PDF translation — all powered by an on-device HY-MT model (llama.cpp + GGUF, ~1.1 GB). Nothing ever leaves your machine. It started as a personal side project and is now **free and open source (MIT) forever** — contributions to cover more sites, PDF layouts, and video platforms are very welcome.
+MagicLingua is a fully local, privacy-first browser translation assistant: full-page web translation, YouTube bilingual subtitles, and layout-preserving PDF translation — all powered by an on-device HY-MT model (llama.cpp + GGUF, ~1.1 GB). **Nothing ever leaves your machine.**
+
+It started as a personal side project and is now **free and open source (MIT) forever** — contributions to cover more sites, PDF layouts, and video platforms are very welcome.
 
 Quick start: ① `./setup_env.sh` ② `./download_model.sh` ③ `./start_server_gguf.sh`, then load `extension/` via `chrome://extensions` (Developer Mode), and run `./native_host/install.command` (macOS) for one-click service start/stop from the popup. The documentation below is in Chinese; issues and PRs in English are welcome.
 
 > The bundled translation model is licensed under the *Tencent HY Community License Agreement*, which **does not apply to the EU, UK, or South Korea** — see [`MODEL_LICENSE.txt`](MODEL_LICENSE.txt).
 
-## 为什么做这个项目
+---
+
+## ✨ 为什么做这个项目
 
 MagicLingua 最初只是**写给我自己用**的一个小工具。
 
@@ -38,53 +61,79 @@ MagicLingua 最初只是**写给我自己用**的一个小工具。
 
 我知道它现在还不够好：站点适配可以更多，PDF 版面还能更精细，字幕场景还可以更丰富。**我一个人能覆盖的场景有限，所以把它完整开源出来**——如果你也有"想读却读不动"的外语内容，欢迎一起来完善它，让它覆盖更多人的真实场景。
 
-**本插件永久免费，永久开源（MIT）**。
+**本插件永久免费，永久开源（MIT）。**
 
-## 效果一览
+---
 
-### 网页整页翻译
+## 🖼️ 效果一览
 
-Google News 这类信息流站点，标题就地翻译、原版式不乱，扫一眼就能抓住全球要闻：
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="docs/screenshot-web.png">
+        <img src="docs/screenshot-web.png" width="340" alt="网页整页翻译">
+      </a>
+      <br>
+      <sub>🌍 网页整页翻译 · Google News 就地替换，版式不乱</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/screenshot-youtube.jpg">
+        <img src="docs/screenshot-youtube.jpg" width="340" alt="YouTube 双语字幕">
+      </a>
+      <br>
+      <sub>🎬 YouTube 双语字幕 · 原字幕与译文同屏对照</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <a href="docs/screenshot-pdf.png">
+        <img src="docs/screenshot-pdf.png" width="300" alt="PDF 翻译助手">
+      </a>
+      <br>
+      <sub>📄 PDF 翻译助手 · 自动解析目录，勾选要翻的文章</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/screenshot-pdf-result.png">
+        <img src="docs/screenshot-pdf-result.png" width="300" alt="PDF 翻译成品">
+      </a>
+      <br>
+      <sub>📑 PDF 翻译成品 · 排版、配图、分栏原样保留</sub>
+    </td>
+  </tr>
+</table>
 
-![网页整页翻译：Google News](docs/screenshot-web.png)
+<p align="center">
+  <sub>⚙️ 插件面板：站点能力开关 + 本地服务一键启停（点图标看大图）</sub>
+</p>
+<p align="center">
+  <a href="docs/screenshot-popup.png">
+    <img src="docs/screenshot-popup.png" width="220" alt="插件面板">
+  </a>
+</p>
 
-### YouTube 双语字幕
+---
 
-原字幕与译文同屏对照，视频照看不误——看访谈、讲座、发布会都能跟上：
+## 🚀 核心能力
 
-![YouTube 双语字幕](docs/screenshot-youtube.jpg)
-
-### PDF 保留版面翻译
-
-左边选文章、右边出成品。《经济学人》76 页解析出 64 篇，只翻你想看的几篇，排版、配图、分栏原样保留：
-
-| PDF 翻译助手（勾选文章） | 翻译成品（目录页） |
-| -------------- | --------- |
-| PDF 翻译助手       | PDF 翻译成品  |
-
-### 插件面板
-
-站点能力开关 + 本地服务一键启停，闲置 20 分钟自动退出、内存归零：
-
-![插件面板](docs/screenshot-popup.png)
-
-## 核心能力
-
-- 🌍 **网页整页翻译** — 通用站点适配，译文就地替换，原版式不乱
-- 🎬 **YouTube 双语字幕** — 原字幕与译文同屏对照，视频照看不误
-- 📄 **PDF 保留版面翻译** — 解析目录 → 勾选文章 → 只翻选中页，成品写回书签；扫描件走本机 OCR（macOS Vision）
-- 🔒 **隐私优先** — 模型跑在本机（llama.cpp + GGUF），译文与文档零上传
-- ⚡ **按需启停** — 服务闲置 20 分钟自动退出、内存归零；点插件即拉起
-- 🔌 **OpenAI 兼容 API** — `http://localhost:18770/v1/chat/completions`，可接入其他工具
-- 🧠 **33 种语言互译** — 中 / 英 / 日 / 韩 / 法 / 德 / 西 / 俄 / 阿 / 葡 等
+| 能力 | 说明 |
+| --- | --- |
+| 🌍 **网页整页翻译** | 通用站点适配，译文就地替换，原版式不乱 |
+| 🎬 **YouTube 双语字幕** | 原字幕与译文同屏对照，视频照看不误 |
+| 📄 **PDF 保留版面翻译** | 解析目录 → 勾选文章 → 只翻选中页，成品写回书签；扫描件走本机 OCR（macOS Vision） |
+| 🔒 **隐私优先** | 模型跑在本机（llama.cpp + GGUF），译文与文档零上传 |
+| ⚡ **按需启停** | 服务闲置 20 分钟自动退出、内存归零；点插件即拉起 |
+| 🔌 **OpenAI 兼容 API** | `http://localhost:18770/v1/chat/completions`，可接入其他工具 |
+| 🧠 **33 种语言互译** | 中 / 英 / 日 / 韩 / 法 / 德 / 西 / 俄 / 阿 / 葡 等 |
 
 同一套本地服务同时驱动扩展与 PDF 助手，模型约 1.1 GB（Q4_K_M 量化），近五年内的电脑（带不带独显）都能跑。
 
-## 安装
+---
+
+## ⚡ 快速开始
 
 一共三步：**装本地服务 → 下模型 → 装扩展**。全程无需云账号、无需 GPU。
 
-### 1. 本地服务（macOS / Linux / Windows）
+### 1️⃣ 本地服务（macOS / Linux / Windows）
 
 环境要求：**Python 3.9+**（推荐 3.11+）、内存 4 GB+、磁盘约 3 GB。
 
@@ -101,9 +150,9 @@ git clone https://github.com/jinleiviva/magiclingua.git && cd magiclingua
 MODEL_REPO=tencent/Hy-MT2-7B-GGUF MODEL_FILE=Hy-MT2-7B.Q4_K_M.gguf ./download_model.sh
 ```
 
-> **Windows 用户**：`setup_env.sh` / `start_server_gguf.sh` 逻辑通用，请在 Git Bash / WSL 中执行；「服务管理器」安装脚本目前仅 macOS（见第 3 步）。
+> 💡 **Windows 用户**：`setup_env.sh` / `start_server_gguf.sh` 逻辑通用，请在 Git Bash / WSL 中执行；「服务管理器」安装脚本目前仅 macOS（见第 3 步）。
 
-### 2. Chrome 扩展
+### 2️⃣ Chrome 扩展
 
 1. Chrome 打开 `chrome://extensions`，开启右上角「**开发者模式**」
 2. 点「**加载已解压的扩展程序**」，选择本仓库的 `extension/` 目录
@@ -111,7 +160,7 @@ MODEL_REPO=tencent/Hy-MT2-7B-GGUF MODEL_FILE=Hy-MT2-7B.Q4_K_M.gguf ./download_mo
 
 > 开发者模式加载的扩展，ID 由**扩展目录路径**决定：目录不动，重载 / 更新代码 ID 恒定；只有移动或重命名 `extension/` 目录才会换 ID。ID 变化后重跑 `install.command`（自动从浏览器扩展记录探测新 ID）即可。**不要**在 manifest 里加固定 `key`——它会让 Chrome 认为扩展 ID 应为 key 派生值，与路径哈希记录冲突，导致扩展被反复禁用。
 
-### 3. 服务管理器（扩展启停服务的通道）
+### 3️⃣ 服务管理器（扩展启停服务的通道）
 
 服务管理器让插件面板能一键**启动 / 停止**本地服务，无需手动开终端。
 
@@ -123,18 +172,17 @@ MODEL_REPO=tencent/Hy-MT2-7B-GGUF MODEL_FILE=Hy-MT2-7B.Q4_K_M.gguf ./download_mo
 
 **Windows / Linux（手动）**：暂无安装脚本。需手动注册 Native Messaging Host：把 `native_host/com.magiclingua.host.json` 样例中的 `path` 改为本机 `native_host/hymt_host.py` 的绝对路径，连同 `allowed_origins` 里的扩展 ID 一起，放到浏览器的 `NativeMessagingHosts` 目录：
 
-| 浏览器      | 目录（Windows）                                                    | 目录（Linux）                                       |
-| -------- | -------------------------------------------------------------- | ----------------------------------------------- |
-| Chrome   | `%LOCALAPPDATA%\Google\Chrome\User Data\NativeMessagingHosts`  | `~/.config/google-chrome/NativeMessagingHosts`  |
-| Edge     | `%LOCALAPPDATA%\Microsoft\Edge\User Data\NativeMessagingHosts` | `~/.config/microsoft-edge/NativeMessagingHosts` |
-| Chromium | `%LOCALAPPDATA%\Chromium\User Data\NativeMessagingHosts`       | `~/.config/chromium/NativeMessagingHosts`       |
+| 浏览器 | 目录（Windows） | 目录（Linux） |
+| --- | --- | --- |
+| Chrome | `%LOCALAPPDATA%\Google\Chrome\User Data\NativeMessagingHosts` | `~/.config/google-chrome/NativeMessagingHosts` |
+| Edge | `%LOCALAPPDATA%\Microsoft\Edge\User Data\NativeMessagingHosts` | `~/.config/microsoft-edge/NativeMessagingHosts` |
+| Chromium | `%LOCALAPPDATA%\Chromium\User Data\NativeMessagingHosts` | `~/.config/chromium/NativeMessagingHosts` |
 
 > **⚠️ 装完服务管理器后，必须完全退出浏览器再重开（macOS 上是 Cmd+Q，不是关窗口）**
 >
 > 浏览器只在**启动时**扫描 `NativeMessagingHosts` 目录。只刷新扩展（`chrome://extensions` 的 ↻）不会重新读取宿主清单，会一直报「Specified native messaging host not found」。
 
 <details>
-
 <summary>换过扩展 ID / 报「native messaging host not found」怎么办？</summary>
 
 扩展 ID 由扩展目录路径决定（同一路径恒定）。若你移动 / 重命名过 `extension/` 目录导致 ID 变化，重跑安装脚本即可——它会自动从浏览器扩展记录探测当前 ID 并并入白名单；也可手动传入（可一次传多个）：
@@ -147,7 +195,9 @@ macOS 下脚本会自动把 ID 并入各浏览器宿主清单的 `allowed_origin
 
 </details>
 
-## 使用
+---
+
+## 🕹️ 使用指南
 
 ### 网页翻译与字幕
 
@@ -178,18 +228,19 @@ curl http://localhost:18770/v1/chat/completions \
   }'
 ```
 
-## 配置参考
+---
 
-| 环境变量                        | 默认                      | 说明                                 |
-| --------------------------- | ----------------------- | ---------------------------------- |
-| `HYMT_PORT`                 | `18770`                 | 服务端口                               |
-| `HYMT_IDLE_EXIT`            | `20`                    | 空闲多少分钟自动退出，`0` = 常驻                |
-| `HYMT_MODEL_PATH`           | 空                       | 直接指定 GGUF 路径（优先于 `models/`）        |
-| `HF_ENDPOINT`               | `https://hf-mirror.com` | Hugging Face 镜像（模型 / BabelDOC 下载用） |
-| `MODEL_REPO` / `MODEL_FILE` | Hy-MT2-1.8B / Q4_K_M    | `download_model.sh` 的下载目标          |
+## ⚙️ 配置参考
+
+| 环境变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `HYMT_PORT` | `18770` | 服务端口 |
+| `HYMT_IDLE_EXIT` | `20` | 空闲多少分钟自动退出，`0` = 常驻 |
+| `HYMT_MODEL_PATH` | 空 | 直接指定 GGUF 路径（优先于 `models/`） |
+| `HF_ENDPOINT` | `https://hf-mirror.com` | Hugging Face 镜像（模型 / BabelDOC 下载用） |
+| `MODEL_REPO` / `MODEL_FILE` | Hy-MT2-1.8B / Q4_K_M | `download_model.sh` 的下载目标 |
 
 <details>
-
 <summary>常见问题</summary>
 
 - **服务起不来**：确认 `venv` 已建（`source venv/bin/activate`）、依赖已装（`pip list | grep llama-cpp`）、模型已下（`ls models/*.gguf`），再看 `tail -f log_server.txt`。
@@ -201,7 +252,9 @@ curl http://localhost:18770/v1/chat/completions \
 
 </details>
 
-## 项目结构
+---
+
+## 📁 项目结构
 
 ```
 magiclingua/
@@ -225,7 +278,9 @@ magiclingua/
 └── NOTICE                 # 许可与商标披露汇总
 ```
 
-## 参与贡献
+---
+
+## 🤝 参与贡献
 
 这个项目是我一个人业余时间做的，**一个人的场景有限，一群人的场景才是全部**。特别欢迎这些方向的贡献：
 
@@ -237,7 +292,9 @@ magiclingua/
 
 用 Issues 提问题与建议；提交 PR 前请确保 `server_gguf.py` 可通过 `python -m py_compile`、扩展改动在 `chrome://extensions` 实测可用，保持改动范围可验证。不会写代码也没关系——把你想让它支持的场景告诉我，同样是宝贵的贡献。
 
-## 致谢
+---
+
+## 🙏 致谢
 
 - [Tencent Hunyuan HY-MT](https://github.com/Tencent-Hunyuan/HY-MT) · [Hy-MT2 GGUF](https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF) — 翻译模型
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) / llama-cpp-python — 本地推理引擎
@@ -246,11 +303,19 @@ magiclingua/
 
 **声明**：MagicLingua 与腾讯及 Hunyuan 团队**不存在从属、授权或背书关系**；HY-MT 模型按 *Tencent HY Community License Agreement* 使用，相关约束见 [`MODEL_LICENSE.txt`](MODEL_LICENSE.txt) 与 [`NOTICE`](NOTICE)。
 
-## 许可证
+---
+
+## 📄 许可证
 
 - **本项目代码**：[MIT License](LICENSE)
 - **翻译模型**：[Tencent HY Community License Agreement](MODEL_LICENSE.txt) — 商业可用；MAU > 1 亿需向腾讯单独申请授权；**不适用于欧盟 / 英国 / 韩国**；再分发须附协议副本与 `NOTICE`；禁止用于改进其他 AI 模型、军事或高风险自动决策等
 
 ---
 
+<div align="center">
+
 **Powered by Tencent Hunyuan HY-MT + llama.cpp** 🚀
+
+<sub>Made for personal use · Given to everyone · 永久免费开源</sub>
+
+</div>
