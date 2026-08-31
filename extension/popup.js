@@ -424,9 +424,12 @@ function initExportSubtitle() {
 }
 
 function flashSubtitleBtn(label) {
-    const original = exportSubtitleBtn.textContent;
-    exportSubtitleBtn.textContent = label;
-    setTimeout(() => { exportSubtitleBtn.textContent = original; }, 2000);
+    // 只改文案 span，不动 SVG（避免 textContent 整片覆盖把图标节点冲掉）
+    const lab = exportSubtitleBtn.querySelector('.sub-label');
+    if (!lab) return;
+    const original = lab.textContent;
+    lab.textContent = label;
+    setTimeout(() => { lab.textContent = original; }, 2000);
 }
 
 function attachEventListeners() {
