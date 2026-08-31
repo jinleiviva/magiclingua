@@ -6,7 +6,8 @@
   "permissions": [
     "storage",
     "activeTab",
-    "nativeMessaging"
+    "nativeMessaging",
+    "contextMenus"
   ],
   "host_permissions": [
     "http://localhost:18770/*",
@@ -35,7 +36,9 @@
         "core/UniversalCore.js",
         "adapters/VideoAdapter.js",
         "adapters/TextFeedAdapter.js",
-        "site_registry.js"
+        "site_registry.js",
+        "selection_bubble.js",
+        "hover_translate.js"
       ],
       "run_at": "document_idle"
     },
@@ -55,6 +58,14 @@
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
+    }
+  },
+  "commands": {
+    "translate-selection": {
+      "suggested_key": {
+        "default": "Alt+T"
+      },
+      "description": "翻译选中的文本"
     }
   },
   "icons": {

@@ -7,6 +7,9 @@
  *   3. 配置管理（以扩展 popup 为准，不再轮询服务端）
  */
 
+// 内置术语表（只读，popup 勾选哪些词库由 config.activeGlossaries 控制）
+importScripts('glossaries.js');
+
 const DEFAULT_CONFIG = {
     enabled: true,
     sourceLanguage: 'auto',
@@ -22,18 +25,159 @@ const DEFAULT_CONFIG = {
         'google.com', 'bing.com', 'baidu.com',
         'github.com', 'gitlab.com', 'stackoverflow.com',
         'localhost', '127.0.0.1'
-    ]
+    ],
+    // 术语表：勾选的词库 + 用户自定义（未勾选的不生效）
+    activeGlossaries: ['finance', 'tech'],
+    customGlossary: {},
+    customGlossaryEnabled: true,
+    // 段落悬停翻译（popup 设置视图配置，默认 Ctrl+悬停）
+    hoverTranslate: true,
+    hoverModifier: 'ctrl',
+    // 译文/字幕配色：null = 未设置（各表面默认色，零回归）；设置后为 {bg, text}
+    translationStyle: null
 };
+
+// 注入 prompt 的术语总量封顶（与服务端 build_translate_prompt 一致）。
+// 合并顺序：自定义 > 内置词库（按定义顺序），超出的部分不注入。
+const GLOSSARY_MAX_ENTRIES = 80;
+
+/**
+ * 合并当前生效的术语表为 {原文: 固定译法} 平面对象。
+ * 只有「勾选的内置词库 + 开启的自定义条目」参与，未勾选的一律不生效。
+ */
+function getActiveGlossary(config) {
+    const merged = {};
+    const push = (k, v) => {
+        if (!k || !v || merged[k]) return;
+        merged[k] = v;
+    };
+
+    // 1. 用户自定义优先（兼容旧版 config.glossary 键）
+    if (config.customGlossaryEnabled !== false) {
+        const custom = config.customGlossary || config.glossary || {};
+        for (const [k, v] of Object.entries(custom)) push(k, v);
+    }
+
+    // 2. 已勾选的内置词库
+    const active = Array.isArray(config.activeGlossaries) ? config.activeGlossaries : [];
+    for (const g of globalThis.BUILTIN_GLOSSARIES || []) {
+        if (!active.includes(g.id)) continue;
+        for (const [src, dst] of g.entries) push(src, dst);
+    }
+
+    // 3. 总量封顶（避免 prompt 过长影响小模型翻译质量）
+    const keys = Object.keys(merged);
+    if (keys.length <= GLOSSARY_MAX_ENTRIES) return merged;
+    const capped = {};
+    for (const k of keys.slice(0, GLOSSARY_MAX_ENTRIES)) capped[k] = merged[k];
+    return capped;
+}
 
 // 本地服务管理器的 Native Messaging 宿主名（由 native_host/install.command 注册）
 const NATIVE_HOST = 'com.magiclingua.host';
 
-const translationCache = new Map();
+const translationCache = new Map();   // cacheKey -> 译文（内存 L1）
 const pendingRequests = new Map();
+
+// ---------------------------------------------------------------------------
+// 译文缓存持久化（L2 = chrome.storage.local）
+//
+// Service Worker 会被 Chrome 随时回收，纯内存缓存在浏览器重启后全部丢失，
+// 同一篇文章第二天再翻要全部重算。降到 storage.local 后重启也能命中。
+// storage 每条译文一个键（t:<hash>，value 含原始 cacheKey 供回读），
+// cacheOrder 存 hash 的写入顺序，用于超限淘汰（与内存同步）。
+// ---------------------------------------------------------------------------
+
+const CACHE_MAX_ENTRIES = 2000;
+const CACHE_EVICT_BATCH = 400;
+const CACHE_PREFIX = 't:';
+const CACHE_ORDER_KEY = 'cacheOrder';
+
+const cacheHashIndex = new Map();  // storage hash -> cacheKey（淘汰时反查内存键）
+let cacheOrder = [];               // storage hash 数组，按写入先后
+let cacheLoaded = null;            // 启动加载 promise（整个 SW 生命周期只跑一次）
+
+function loadPersistentCache() {
+    if (cacheLoaded) return cacheLoaded;
+    cacheLoaded = new Promise((resolve) => {
+        chrome.storage.local.get(CACHE_ORDER_KEY, (data) => {
+            const order = (data && data[CACHE_ORDER_KEY]) || [];
+            if (!order.length) { resolve(); return; }
+            chrome.storage.local.get(order.map(h => CACHE_PREFIX + h), (entries) => {
+                for (const h of order) {
+                    const entry = entries[CACHE_PREFIX + h];
+                    if (entry && entry.k && entry.v) {
+                        translationCache.set(entry.k, entry.v);
+                        cacheHashIndex.set(h, entry.k);
+                        cacheOrder.push(h);
+                    }
+                }
+                resolve();
+            });
+        });
+    });
+    return cacheLoaded;
+}
+
+function persistTranslation(cacheKey, translation) {
+    const isNew = !translationCache.has(cacheKey);
+    translationCache.set(cacheKey, translation);
+    if (!isNew) return;
+
+    let h = hashString(cacheKey);
+    // 32 位 hash 极小概率碰撞，撞了就加盐重散列
+    while (cacheHashIndex.has(h) && cacheHashIndex.get(h) !== cacheKey) {
+        h = hashString(h + '#');
+    }
+    cacheHashIndex.set(h, cacheKey);
+    cacheOrder.push(h);
+
+    chrome.storage.local.set({ [CACHE_PREFIX + h]: { k: cacheKey, v: translation } });
+
+    if (cacheOrder.length > CACHE_MAX_ENTRIES) {
+        const evicted = cacheOrder.splice(0, CACHE_EVICT_BATCH);
+        evicted.forEach(x => {
+            const k = cacheHashIndex.get(x);
+            if (k !== undefined) translationCache.delete(k);
+            cacheHashIndex.delete(x);
+        });
+        chrome.storage.local.remove(evicted.map(x => CACHE_PREFIX + x));
+    }
+    chrome.storage.local.set({ [CACHE_ORDER_KEY]: cacheOrder });
+}
 
 chrome.runtime.onInstalled.addListener(() => {
     chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
+        // 迁移旧版 config.glossary → customGlossary（一次性，保留用户自定义条目）
+        if (config.glossary && Object.keys(config.glossary).length && !config.customGlossary) {
+            config.customGlossary = config.glossary;
+            delete config.glossary;
+        }
         chrome.storage.sync.set(config);
+    });
+
+    // 右键菜单「翻译选中内容」：划词翻译的入口之一
+    chrome.contextMenus.create({
+        id: 'hy-mt-translate-selection',
+        title: '翻译选中内容',
+        contexts: ['selection']
+    }, () => void chrome.runtime.lastError); // 重复安装时已存在，忽略报错
+});
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId !== 'hy-mt-translate-selection' || !tab || tab.id == null) return;
+    chrome.tabs.sendMessage(tab.id, { action: 'translateSelection' }).catch(() => {
+        // 内容脚本未注入（chrome:// 页等）时忽略
+    });
+});
+
+// 快捷键（默认 Alt+T，chrome://extensions/shortcuts 可改）
+chrome.commands.onCommand.addListener((command) => {
+    if (command !== 'translate-selection') return;
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0] && tabs[0].id != null) {
+            chrome.tabs.sendMessage(tabs[0].id, { action: 'translateSelection' }).catch(() => {});
+        }
     });
 });
 
@@ -118,35 +262,43 @@ async function serviceStatus() {
 }
 
 function handleTranslateRequest(request, sendResponse) {
-    // context 参与缓存 key，避免不同上下文下同一句译文被错误复用
-    const contextKey = request.context ? hashString(request.context) : '';
-    const cacheKey = `${request.text}|${request.targetLanguage}|${contextKey}`;
+    // 先等持久化缓存加载完成（只等第一次），再做内存命中判断
+    loadPersistentCache().then(() => {
+        chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
+            // context 和生效词库都参与缓存 key：勾选/词条任一变化，旧译文自动失效
+            const contextKey = request.context ? hashString(request.context) : '';
+            const activeGlossary = getActiveGlossary(config);
+            const glossaryKey = Object.keys(activeGlossary).length
+                ? hashString(JSON.stringify(activeGlossary)) : '';
+            const cacheKey = `${request.text}|${request.targetLanguage}|${contextKey}|${glossaryKey}`;
 
-    if (translationCache.has(cacheKey)) {
-        sendResponse({ success: true, translation: translationCache.get(cacheKey) });
-        return true;
-    }
+            if (translationCache.has(cacheKey)) {
+                sendResponse({ success: true, translation: translationCache.get(cacheKey) });
+                return;
+            }
 
-    // 相同请求正在飞行中时复用，不重复占队列
-    if (pendingRequests.has(cacheKey)) {
-        pendingRequests.get(cacheKey)
-            .then(translation => sendResponse({ success: true, translation }))
-            .catch(error => sendResponse({ success: false, error: error.message }));
-        return true;
-    }
+            // 相同请求正在飞行中时复用，不重复占队列
+            if (pendingRequests.has(cacheKey)) {
+                pendingRequests.get(cacheKey)
+                    .then(translation => sendResponse({ success: true, translation }))
+                    .catch(error => sendResponse({ success: false, error: error.message }));
+                return;
+            }
 
-    const promise = enqueueTranslation(request, cacheKey);
-    pendingRequests.set(cacheKey, promise);
+            const promise = enqueueTranslation(request, cacheKey);
+            pendingRequests.set(cacheKey, promise);
 
-    promise
-        .then(translation => {
-            pendingRequests.delete(cacheKey);
-            sendResponse({ success: true, translation });
-        })
-        .catch(error => {
-            pendingRequests.delete(cacheKey);
-            sendResponse({ success: false, error: error.message });
+            promise
+                .then(translation => {
+                    pendingRequests.delete(cacheKey);
+                    sendResponse({ success: true, translation });
+                })
+                .catch(error => {
+                    pendingRequests.delete(cacheKey);
+                    sendResponse({ success: false, error: error.message });
+                });
         });
+    });
 
     return true;
 }
@@ -190,7 +342,7 @@ async function processQueue() {
     const item = requestQueue.shift();
 
     try {
-        const translation = await callTranslateService(item.request);
+        const translation = await callTranslateService(item.request, item.cacheKey);
         item.resolve(translation);
     } catch (error) {
         item.reject(error);
@@ -200,7 +352,7 @@ async function processQueue() {
     }
 }
 
-async function callTranslateService(request) {
+async function callTranslateService(request, cacheKey) {
     const config = await new Promise(resolve => {
         chrome.storage.sync.get(DEFAULT_CONFIG, resolve);
     });
@@ -213,6 +365,12 @@ async function callTranslateService(request) {
 
     // YouTube 字幕带上前一句作上下文，能明显减少断句误译
     if (request.context) body.context = request.context;
+
+    // 术语表（勾选词库 + 自定义，合并后服务端构造进 prompt）
+    const activeGlossary = getActiveGlossary(config);
+    if (Object.keys(activeGlossary).length) {
+        body.glossary = activeGlossary;
+    }
 
     const response = await fetch(`${config.serverUrl}/v1/translate`, {
         method: 'POST',
@@ -241,16 +399,8 @@ async function callTranslateService(request) {
         throw new Error('服务返回空译文');
     }
 
-    translationCache.set(
-        `${request.text}|${request.targetLanguage}|${request.context ? hashString(request.context) : ''}`,
-        translation
-    );
-
-    // 缓存上限 2000 条，超出后淘汰最早的一批
-    if (translationCache.size > 2000) {
-        const keys = Array.from(translationCache.keys()).slice(0, 400);
-        keys.forEach(k => translationCache.delete(k));
-    }
+    // 写入内存 + chrome.storage.local（Service Worker 回收/重启后仍能命中）
+    persistTranslation(cacheKey, translation);
 
     return translation;
 }
@@ -260,9 +410,17 @@ async function callTranslateService(request) {
 // ---------------------------------------------------------------------------
 
 const LANG_CODE_MAP = {
-    'Chinese': 'zh', 'English': 'en', 'Japanese': 'ja', 'Korean': 'ko',
-    'French': 'fr', 'German': 'de', 'Spanish': 'es', 'Russian': 'ru',
-    'Portuguese': 'pt', 'Italian': 'it', 'Dutch': 'nl', 'Arabic': 'ar'
+    'Chinese': 'zh', 'Traditional Chinese': 'zh-Hant', 'Cantonese': 'yue',
+    'English': 'en', 'Japanese': 'ja', 'Korean': 'ko',
+    'French': 'fr', 'German': 'de', 'Spanish': 'es', 'Portuguese': 'pt',
+    'Italian': 'it', 'Dutch': 'nl', 'Russian': 'ru', 'Ukrainian': 'uk',
+    'Polish': 'pl', 'Czech': 'cs', 'Turkish': 'tr', 'Arabic': 'ar',
+    'Persian': 'fa', 'Hebrew': 'he', 'Hindi': 'hi', 'Urdu': 'ur',
+    'Bengali': 'bn', 'Gujarati': 'gu', 'Marathi': 'mr', 'Tamil': 'ta',
+    'Telugu': 'te', 'Thai': 'th', 'Vietnamese': 'vi',
+    'Indonesian': 'id', 'Malay': 'ms', 'Filipino': 'tl',
+    'Khmer': 'km', 'Burmese': 'my',
+    'Tibetan': 'bo', 'Kazakh': 'kk', 'Mongolian': 'mn', 'Uyghur': 'ug'
 };
 
 function langNameToCode(name) {

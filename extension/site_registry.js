@@ -20,6 +20,8 @@ const HY_MT_SITES = {
         optimizationLevel: 'verified',
         adapter: 'VideoAdapter',
         subtitleTrack: 'youtube',
+        // 字幕翻译浮层跟随控制栏显隐升降（ytp-autohide，YouTube 专属）
+        controlsAware: true,
         containerSelector: '.ytp-caption-window-container',
         textSelector: '.ytp-caption-segment',
         videoPlayerSelector: '.html5-video-player',
@@ -47,10 +49,58 @@ const HY_MT_SITES = {
     },
 
     // ------------------------------------------------------------------
+    // 视频站点 · DOM 字幕观察模式（实验性）
+    //
+    // 走 VideoAdapter 的 DOM 观察兜底：只依赖站点把字幕渲染成 DOM 文本，
+    // 需要在播放器里手动开启原字幕（CC）。
+    //
+    // 实测状态（2026-08-31，系统 Chrome + Playwright）：
+    //   - udemy：播放器已改版（data-purpose="media-player-container" + HLS），
+    //     旧 data-purpose 字幕容器全部失效，已按新结构更新；字幕 cue 的
+    //     精确渲染位置因免费课无字幕 + 登录墙未能实测，按社区资料保留
+    //     新旧两代候选（CSS Modules hash class 会变，用前缀匹配）。
+    //   - netflix / coursera：均为登录墙，匿名访问渲染不出字幕 DOM，
+    //     选择器来自社区公开资料（Netflix .player-timedtext 被多款开源
+    //     字幕扩展引用；Coursera 播放器基于 video.js），未实测。
+    // ------------------------------------------------------------------
+    'netflix.com': {
+        type: 'video',
+        optimizationLevel: 'experimental',
+        adapter: 'VideoAdapter',
+        containerSelector: '.player-timedtext',
+        textSelector: '.player-timedtext-text-container span',
+        videoPlayerSelector: 'section[data-uia="video-player"], .watch-video--player-view',
+        // 站点自己的字幕在画面底部，译文字幕浮层抬高到其上方避免重叠
+        overlayBottom: '16%'
+    },
+    'coursera.org': {
+        type: 'video',
+        optimizationLevel: 'experimental',
+        adapter: 'VideoAdapter',
+        // Coursera 播放器基于 video.js，字幕渲染在 .vjs-text-track-display 里
+        containerSelector: '.vjs-text-track-display',
+        textSelector: '.vjs-text-track-cue, .vjs-tt-cue',
+        videoPlayerSelector: '.video-js, [data-testid="video-player"]',
+        overlayBottom: '90px'
+    },
+    'udemy.com': {
+        type: 'video',
+        optimizationLevel: 'experimental',
+        adapter: 'VideoAdapter',
+        // 2026-08 实测：播放器容器已确认是 [data-purpose="media-player-container"]；
+        // 字幕容器保留新旧两代候选（旧 data-purpose 仍可能存在于部分页面，
+        // 新 CSS Modules 用 class 前缀匹配），querySelector 返回第一个命中的
+        containerSelector: '[data-purpose="captions-container"], [class*="captions-display"]',
+        textSelector: '[data-purpose="captions-cue"], [class*="captions-display"] span',
+        videoPlayerSelector: '[data-purpose="media-player-container"], [data-purpose="video-player"]',
+        overlayBottom: '90px'
+    },
+
+    // ------------------------------------------------------------------
     // 财经 / 新闻站点
     //
     // 选择器基于各站当前公开页面结构编写。前端改版后可能失效，
-    // 届時只需改这里的字符串，不用动适配器代码。
+    // 届时只需改这里的字符串，不用动适配器代码。
     // ------------------------------------------------------------------
     'ft.com': {
         type: 'text_feed',

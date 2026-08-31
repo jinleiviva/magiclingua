@@ -4,6 +4,10 @@
  * 配置统一由本面板管理（Electron 桌面端已归档）。
  * 改动写入 chrome.storage.sync 后通知 background，再广播到所有标签页。
  *
+ * 信息架构（双视图，CSS display 切换，零路由）：
+ *   主视图   = 高频动作：站点开关 / 翻译本页 / 导出字幕 / 目标语言+显示模式 / 文档入口
+ *   设置视图 = 低频配置：翻译行为（悬停翻译）/ 译文样式 / 术语表（含 CSV）/ 本地服务
+ *
  * 本地服务的启停走 background -> Native Messaging 宿主，
  * 扩展自身不能创建进程，这是 Chrome 唯一允许的通路。
  */
@@ -16,8 +20,25 @@ const DEFAULT_CONFIG = {
     pdfBilingual: false,
     fontSize: 24,
     serverUrl: 'http://localhost:18770',
-    blacklist: []
+    blacklist: [],
+    activeGlossaries: ['finance', 'tech'],
+    customGlossary: {},
+    customGlossaryEnabled: true,
+    // 段落悬停翻译（默认 Ctrl+悬停）
+    hoverTranslate: true,
+    hoverModifier: 'ctrl',
+    // 译文/字幕配色：null = 未设置（各表面保持默认色，零回归）；
+    // 设置后为 {bg, text}，字幕底色/文字色 + 整页译文与 feed 文字色统一跟随
+    translationStyle: null
 };
+
+// 译文配色预设（与沉浸式等工具对齐的 4 组常用组合）
+const STYLE_PRESETS = [
+    { name: '深底白字', bg: 'rgba(0,0,0,0.8)', text: '#ffffff' },
+    { name: '浅底深字', bg: 'rgba(244,246,250,0.96)', text: '#1c1c1e' },
+    { name: '深底黄字', bg: 'rgba(28,28,30,0.92)', text: '#ffd02f' },
+    { name: '半透明黑底白字', bg: 'rgba(8,8,8,0.75)', text: '#ffffff' }
+];
 
 // DOM 元素（显式声明，不依赖 id 隐式全局）
 const enabledToggle = document.getElementById('enabledToggle');
@@ -30,15 +51,46 @@ const pdfBilingualToggle = document.getElementById('pdfBilingualToggle');
 const fontSize = document.getElementById('fontSize');
 const fontSizeValue = document.getElementById('fontSizeValue');
 const serverUrl = document.getElementById('serverUrl');
-const openPdfBtn = document.getElementById('openPdfBtn');
+const openDocBtn = document.getElementById('openDocBtn');
 const statusText = document.getElementById('statusText');
 const statusBox = document.getElementById('status');
 
+// 双视图
+const viewMain = document.getElementById('viewMain');
+const viewSettings = document.getElementById('viewSettings');
+const settingsBtn = document.getElementById('settingsBtn');
+const backBtn = document.getElementById('backBtn');
+const settingsTitle = document.getElementById('settingsTitle');
+
+// 悬停翻译 + 样式
+const hoverToggle = document.getElementById('hoverToggle');
+const hoverModifier = document.getElementById('hoverModifier');
+const stylePresets = document.getElementById('stylePresets');
+const styleBgColor = document.getElementById('styleBgColor');
+const styleTextColor = document.getElementById('styleTextColor');
+
+// 字幕导出
+const exportSubtitleBtn = document.getElementById('exportSubtitleBtn');
+
+// 服务
 const serviceState = document.getElementById('serviceState');
 const serviceHint = document.getElementById('serviceHint');
 const serviceToggleBtn = document.getElementById('serviceToggleBtn');
 const serviceRow = document.getElementById('serviceRow');
 const pageTranslateBtn = document.getElementById('pageTranslateBtn');
+
+// 术语表
+const glossCard = document.getElementById('glossCard');
+const glossCount = document.getElementById('glossCount');
+const builtinGlossList = document.getElementById('builtinGlossList');
+const customGlossToggle = document.getElementById('customGlossToggle');
+const customGlossCount = document.getElementById('customGlossCount');
+const customGlossaryInput = document.getElementById('customGlossaryInput');
+const importCsvBtn = document.getElementById('importCsvBtn');
+const exportCsvBtn = document.getElementById('exportCsvBtn');
+const importCsvFile = document.getElementById('importCsvFile');
+
+const GLOSSARY_MAX_ENTRIES = 80; // 与服务端 build_translate_prompt 的上限一致
 
 let initialHostname = null;
 let refreshTimer = null;
@@ -48,10 +100,33 @@ document.addEventListener('DOMContentLoaded', () => {
     attachEventListeners();
     initCurrentSite();
     initPageTranslateBtn();
+    initViewSwitch();
+    initExportSubtitle();
     refreshService();
     // 面板开着时持续刷新：启动过程中要能看到「加载中 -> 运行中」
     refreshTimer = setInterval(refreshService, 4000);
 });
+
+// ---------------------------------------------------------------------------
+// 视图切换：主视图 <-> 设置视图（CSS display 切换，零路由）
+// ---------------------------------------------------------------------------
+
+function initViewSwitch() {
+    settingsBtn.addEventListener('click', () => {
+        viewMain.hidden = true;
+        viewSettings.hidden = false;
+        backBtn.classList.remove('hidden');
+        settingsTitle.classList.remove('hidden');
+        settingsBtn.classList.add('active');
+    });
+    backBtn.addEventListener('click', () => {
+        viewSettings.hidden = true;
+        viewMain.hidden = false;
+        backBtn.classList.add('hidden');
+        settingsTitle.classList.add('hidden');
+        settingsBtn.classList.remove('active');
+    });
+}
 
 // ---------------------------------------------------------------------------
 // 整页翻译按钮（任何网站都可用，与站点适配器无关）
@@ -128,15 +203,252 @@ function initCurrentSite() {
 
 function loadConfig() {
     chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
+        // 迁移旧版 config.glossary → customGlossary（自定义条目保留，继续生效）
+        if (config.glossary && Object.keys(config.glossary).length && !config.customGlossary) {
+            config.customGlossary = config.glossary;
+            delete config.glossary;
+            saveConfig({ customGlossary: config.customGlossary });
+        }
+
         enabledToggle.checked = config.enabled;
         targetLanguage.value = config.targetLanguage;
+        // 配置里存着已不支持的语言（历史遗留）时回退到中文，避免 select 落到空值
+        if (targetLanguage.selectedIndex === -1) targetLanguage.value = 'Chinese';
         displayMode.value = config.displayMode;
         bilingualToggle.checked = config.bilingualSubtitle;
         pdfBilingualToggle.checked = config.pdfBilingual;
         fontSize.value = config.fontSize;
         fontSizeValue.textContent = `${config.fontSize}px`;
         serverUrl.value = config.serverUrl;
+
+        // 悬停翻译 + 译文样式
+        hoverToggle.checked = config.hoverTranslate !== false;
+        hoverModifier.value = config.hoverModifier || 'ctrl';
+        const tStyle = config.translationStyle || {};
+        styleBgColor.value = rgbaToHex(tStyle.bg || 'rgba(8,8,8,0.75)');
+        styleTextColor.value = rgbaToHex(tStyle.text || '#ffffff');
+        renderStylePresets(config.translationStyle);
+
+        renderBuiltinGlossaries(config.activeGlossaries);
+        customGlossToggle.checked = config.customGlossaryEnabled !== false;
+        customGlossaryInput.value = glossaryToText(config.customGlossary);
+        updateGlossCount(config);
     });
+}
+
+// ---------------------------------------------------------------------------
+// 译文样式：4 组预设色块 + 自定义颜色
+// ---------------------------------------------------------------------------
+
+function renderStylePresets(current) {
+    stylePresets.innerHTML = '';
+    const cur = current || {};
+
+    STYLE_PRESETS.forEach((p, idx) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'preset-swatch';
+        btn.dataset.idx = String(idx);
+        btn.title = p.name;
+        btn.style.background = p.bg;
+        btn.style.color = p.text;
+        if (cur.bg === p.bg && cur.text === p.text) btn.classList.add('selected');
+        stylePresets.appendChild(btn);
+    });
+}
+
+function rgbaToHex(rgba) {
+    const m = String(rgba).match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+    if (m) {
+        const to2 = x => parseInt(x, 10).toString(16).padStart(2, '0');
+        return '#' + to2(m[1]) + to2(m[2]) + to2(m[3]);
+    }
+    if (String(rgba).startsWith('#')) return rgba;
+    return '#000000';
+}
+
+// ---------------------------------------------------------------------------
+// 术语表：内置词库勾选生效 + 自定义条目 + CSV 导入导出
+// config.activeGlossaries  = 勾选的内置词库 id 数组（未勾选的不生效）
+// config.customGlossary    = 用户自定义 {原文: 固定译法}
+// config.customGlossaryEnabled = 自定义条目总开关
+// ---------------------------------------------------------------------------
+
+function renderBuiltinGlossaries(activeIds) {
+    const active = Array.isArray(activeIds) ? activeIds : [];
+    builtinGlossList.innerHTML = '';
+
+    for (const g of globalThis.BUILTIN_GLOSSARIES || []) {
+        const row = document.createElement('label');
+        row.className = 'gloss-row';
+
+        const sw = document.createElement('span');
+        sw.className = 'switch sm';
+        sw.innerHTML = '<input type="checkbox" data-gloss-id=""><span class="track"><span class="knob"></span></span>';
+        sw.querySelector('input').dataset.glossId = g.id;
+        sw.querySelector('input').checked = active.includes(g.id);
+
+        const name = document.createElement('span');
+        name.className = 'gloss-name';
+        name.textContent = g.name;
+
+        const count = document.createElement('span');
+        count.className = 'gloss-count';
+        count.textContent = `${g.entries.length} 条`;
+
+        row.append(sw, name, count);
+
+        const desc = document.createElement('div');
+        desc.className = 'gloss-desc';
+        desc.textContent = g.desc;
+
+        builtinGlossList.append(row, desc);
+    }
+}
+
+function glossaryToText(glossary) {
+    if (!glossary) return '';
+    return Object.entries(glossary).map(([k, v]) => `${k}=${v}`).join('\n');
+}
+
+function textToGlossary(text) {
+    const glossary = {};
+    for (const rawLine of (text || '').split('\n')) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        const eq = line.indexOf('=');
+        if (eq <= 0) continue; // 没有「=」或键为空的行直接忽略
+        const key = line.slice(0, eq).trim();
+        const value = line.slice(eq + 1).trim();
+        if (!key || !value) continue;
+        glossary[key] = value;
+        if (Object.keys(glossary).length >= GLOSSARY_MAX_ENTRIES) break;
+    }
+    return glossary;
+}
+
+// ---- CSV（与沉浸式翻译术语库同格式：原文,译法，两列）----
+
+function csvEscape(value) {
+    const str = String(value);
+    return /[",\r\n]/.test(str) ? '"' + str.replace(/"/g, '""') + '"' : str;
+}
+
+function glossaryToCsv(glossary) {
+    return Object.entries(glossary)
+        .map(([k, v]) => `${csvEscape(k)},${csvEscape(v)}`)
+        .join('\r\n');
+}
+
+function parseCsvLine(line) {
+    const out = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (inQ) {
+            if (c === '"') {
+                if (line[i + 1] === '"') { cur += '"'; i++; }
+                else inQ = false;
+            } else {
+                cur += c;
+            }
+        } else if (c === '"') {
+            inQ = true;
+        } else if (c === ',') {
+            out.push(cur); cur = '';
+        } else {
+            cur += c;
+        }
+    }
+    out.push(cur);
+    return out;
+}
+
+function csvToGlossary(text) {
+    const glossary = {};
+    const body = String(text || '').replace(/^\uFEFF/, '');
+    for (const rawLine of body.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        const cols = parseCsvLine(line);
+        const key = (cols[0] || '').trim();
+        const value = (cols[1] || '').trim();
+        if (!key || !value) continue;
+        glossary[key] = value;
+        if (Object.keys(glossary).length >= GLOSSARY_MAX_ENTRIES) break;
+    }
+    return glossary;
+}
+
+/** 触发浏览器下载（无需 downloads 权限）。bom=true 用于 CSV（Excel 中文不乱码） */
+function downloadText(filename, text, mime, bom) {
+    const blob = new Blob([bom ? '\uFEFF' : '', text], { type: `${mime};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** 当前生效的条目总数（勾选词库 + 开启的自定义），用于 summary 角标 */
+function countActiveEntries(config) {
+    const active = Array.isArray(config.activeGlossaries) ? config.activeGlossaries : [];
+    let n = 0;
+    for (const g of globalThis.BUILTIN_GLOSSARIES || []) {
+        if (active.includes(g.id)) n += g.entries.length;
+    }
+    if (config.customGlossaryEnabled !== false && config.customGlossary) {
+        n += Object.keys(config.customGlossary).length;
+    }
+    return Math.min(n, GLOSSARY_MAX_ENTRIES);
+}
+
+function updateGlossCount(config) {
+    const active = Array.isArray(config.activeGlossaries) ? config.activeGlossaries : [];
+    const n = countActiveEntries(config);
+    const parts = [];
+    if (active.length) parts.push(`${active.length} 个词库`);
+    parts.push(`生效 ${n} 条`);
+    glossCount.textContent = parts.join(' · ');
+
+    const customN = config.customGlossary ? Object.keys(config.customGlossary).length : 0;
+    customGlossCount.textContent = customN ? `${customN} 条` : '';
+}
+
+// ---------------------------------------------------------------------------
+// 字幕导出（视频站场景，VideoAdapter 提供数据）
+// ---------------------------------------------------------------------------
+
+function initExportSubtitle() {
+    // 打开面板时探测当前页是否有可导出的字幕轨道
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs[0]) return;
+        chrome.tabs.sendMessage(tabs[0].id, { action: 'exportSubtitles', probe: true }, (resp) => {
+            if (chrome.runtime.lastError || !resp || !resp.ok || !resp.available) return;
+            exportSubtitleBtn.classList.remove('hidden');
+        });
+    });
+
+    exportSubtitleBtn.addEventListener('click', () => {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (!tabs[0]) return;
+            chrome.tabs.sendMessage(tabs[0].id, { action: 'exportSubtitles' }, (resp) => {
+                if (chrome.runtime.lastError || !resp || !resp.ok || !resp.srtText) {
+                    flashSubtitleBtn('暂无可用字幕');
+                    return;
+                }
+                downloadText(`${resp.name || 'subtitles'}.srt`, resp.srtText, 'text/plain', false);
+                flashSubtitleBtn('已导出 ✓');
+            });
+        });
+    });
+}
+
+function flashSubtitleBtn(label) {
+    const original = exportSubtitleBtn.textContent;
+    exportSubtitleBtn.textContent = label;
+    setTimeout(() => { exportSubtitleBtn.textContent = original; }, 2000);
 }
 
 function attachEventListeners() {
@@ -191,7 +503,132 @@ function attachEventListeners() {
         refreshService();
     });
 
-    openPdfBtn.addEventListener('click', (e) => {
+    // 悬停翻译：总开关 + 触发修饰键
+    hoverToggle.addEventListener('change', () => {
+        saveConfig({ hoverTranslate: hoverToggle.checked });
+    });
+
+    hoverModifier.addEventListener('change', () => {
+        saveConfig({ hoverModifier: hoverModifier.value });
+    });
+
+    // 译文样式：预设点选 / 自定义颜色
+    stylePresets.addEventListener('click', (e) => {
+        const btn = e.target.closest('.preset-swatch');
+        if (!btn) return;
+        const preset = STYLE_PRESETS[parseInt(btn.dataset.idx, 10)];
+        if (!preset) return;
+        const tStyle = { bg: preset.bg, text: preset.text };
+        saveConfig({ translationStyle: tStyle });
+        renderStylePresets(tStyle);
+        styleBgColor.value = rgbaToHex(preset.bg);
+        styleTextColor.value = rgbaToHex(preset.text);
+    });
+
+    const saveStyleColors = () => {
+        const tStyle = { bg: styleBgColor.value, text: styleTextColor.value };
+        saveConfig({ translationStyle: tStyle });
+        renderStylePresets(tStyle);
+    };
+    styleBgColor.addEventListener('change', saveStyleColors);
+    styleTextColor.addEventListener('change', saveStyleColors);
+
+    // 术语表：勾选/取消内置词库（未勾选的不生效）
+    builtinGlossList.addEventListener('change', (e) => {
+        const input = e.target;
+        if (!input.dataset || !input.dataset.glossId) return;
+        const gid = input.dataset.glossId;
+
+        chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
+            let active = Array.isArray(config.activeGlossaries) ? config.activeGlossaries : [];
+            if (input.checked) {
+                if (!active.includes(gid)) active.push(gid);
+            } else {
+                active = active.filter(x => x !== gid);
+            }
+            const newConfig = { ...config, activeGlossaries: active };
+            saveConfig({ activeGlossaries: active });
+            updateGlossCount(newConfig);
+        });
+    });
+
+    // 术语表：自定义条目总开关
+    customGlossToggle.addEventListener('change', () => {
+        chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
+            const newConfig = { ...config, customGlossaryEnabled: customGlossToggle.checked };
+            saveConfig({ customGlossaryEnabled: customGlossToggle.checked });
+            updateGlossCount(newConfig);
+        });
+    });
+
+    // 术语表：自定义条目失焦/收起时解析保存；第一次写入内容时自动开启
+    customGlossaryInput.addEventListener('change', () => {
+        const customGlossary = textToGlossary(customGlossaryInput.value);
+        customGlossaryInput.value = glossaryToText(customGlossary);
+
+        chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
+            const updates = { customGlossary };
+            if (!customGlossToggle.checked && Object.keys(customGlossary).length) {
+                customGlossToggle.checked = true;
+                updates.customGlossaryEnabled = true;
+            }
+            const newConfig = { ...config, ...updates };
+            saveConfig(updates);
+            updateGlossCount(newConfig);
+        });
+    });
+
+    // 术语表：CSV 导出（自定义 + 勾选词库合并，UTF-8 BOM 防 Excel 乱码）
+    exportCsvBtn.addEventListener('click', () => {
+        chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
+            const merged = {};
+            if (config.customGlossaryEnabled !== false) {
+                Object.assign(merged, config.customGlossary);
+            }
+            const active = Array.isArray(config.activeGlossaries) ? config.activeGlossaries : [];
+            for (const g of globalThis.BUILTIN_GLOSSARIES || []) {
+                if (!active.includes(g.id)) continue;
+                for (const [k, v] of g.entries) {
+                    if (!(k in merged)) merged[k] = v;
+                }
+            }
+            if (!Object.keys(merged).length) {
+                flashCsvBtn(exportCsvBtn, '暂无内容');
+                return;
+            }
+            downloadText('magiclingua-glossary.csv', glossaryToCsv(merged), 'text/csv', true);
+        });
+    });
+
+    // 术语表：CSV 导入（合并进自定义条目，冲突以文件为准，自动开启）
+    importCsvBtn.addEventListener('click', () => importCsvFile.click());
+    importCsvFile.addEventListener('change', () => {
+        const file = importCsvFile.files[0];
+        importCsvFile.value = '';
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            const imported = csvToGlossary(String(reader.result || ''));
+            chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
+                const merged = { ...(config.customGlossary || {}), ...imported };
+                const updates = { customGlossary: merged };
+                if (!customGlossToggle.checked && Object.keys(merged).length) {
+                    customGlossToggle.checked = true;
+                    updates.customGlossaryEnabled = true;
+                }
+                const newConfig = { ...config, ...updates };
+                saveConfig(updates);
+                customGlossaryInput.value = glossaryToText(merged);
+                updateGlossCount(newConfig);
+                flashCsvBtn(importCsvBtn, `导入 ${Object.keys(imported).length} 条 ✓`);
+            });
+        };
+        reader.readAsText(file, 'utf-8');
+    });
+
+    // 文档翻译入口（服务端 /pdf 页已扩展为 PDF/EPUB/TXT/字幕 通用文档页）
+    openDocBtn.addEventListener('click', (e) => {
         e.preventDefault();
         chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
             chrome.tabs.create({ url: `${config.serverUrl}/pdf` });
@@ -204,6 +641,12 @@ function attachEventListeners() {
         const verb = isRunning ? '停止' : '启动';
         controlService(action, verb);
     });
+}
+
+function flashCsvBtn(btn, label) {
+    const original = btn.textContent;
+    btn.textContent = label;
+    setTimeout(() => { btn.textContent = original; }, 2000);
 }
 
 function saveConfig(updates) {

@@ -300,7 +300,7 @@ class UniversalCore {
                 display: block;
                 margin-top: 4px;
                 padding: 2px 0;
-                color: #2563eb;
+                color: var(--hy-mt-page-color, #2563eb);
                 font-size: 1em;
                 line-height: 1.6;
                 pointer-events: auto;
@@ -353,8 +353,22 @@ class UniversalCore {
     updateGlobalStyles() {
         const root = document.documentElement;
         root.style.setProperty('--hy-mt-size', `${this.config.fontSize}px`);
+
+        // 译文/字幕配色：未显式设置时各表面用默认（视频字幕深底白字），零回归；
+        // 用户在设置视图配置后，字幕底色/文字色 + 整页译文/feed 文字色统一跟随。
+        const tStyle = this.config.translationStyle || {};
+        const bg = tStyle.bg || this.config.backgroundColor || 'rgba(0,0,0,0.8)';
+        const text = tStyle.text || this.config.textColor || '#ffffff';
+        root.style.setProperty('--hy-mt-bg', bg);
+        root.style.setProperty('--hy-mt-color', text);
+        if (this.config.translationStyle) {
+            root.style.setProperty('--hy-mt-text-color-feed', text);
+            root.style.setProperty('--hy-mt-page-color', text);
+        }
         // High Contrast: Twitter Black for Light Mode, Twitter White for Dark Mode
-        root.style.setProperty('--hy-mt-text-color-feed', this.config.theme === 'dark' ? '#e7e9ea' : '#0f1419');
+        if (!this.config.translationStyle) {
+            root.style.setProperty('--hy-mt-text-color-feed', this.config.theme === 'dark' ? '#e7e9ea' : '#0f1419');
+        }
     }
 
     // --- Adapter Management ---

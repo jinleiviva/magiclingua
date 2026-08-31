@@ -93,7 +93,7 @@ class TextFeedAdapter {
             if (node.matches(exclude)) return true;
             if (node.closest(exclude)) return true;
         } catch (e) {
-            // 选择器非法时保守放行，由 AutoAdapter 的启发式兜底
+            // 选择器非法时保守放行，避免站点配置错误导致整站不翻
             console.warn('HY-MT: excludeSelector 无效', exclude, e);
         }
         return false;

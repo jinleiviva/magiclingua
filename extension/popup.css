@@ -86,6 +86,44 @@ button, input, select { font-family: inherit; }
   padding: 14px 16px;
 }
 
+.hd-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 头部图标按钮（⚙️ 设置 / ← 返回） */
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--ink); }
+.icon-btn.active { background: var(--surface-yellow); color: var(--yellow-dark); }
+@media (prefers-color-scheme: dark) { .icon-btn.active { background: var(--line); color: var(--yellow); } }
+
+.settings-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .2px;
+}
+
+.hidden { display: none !important; }
+
+/* 视图容器：主视图 / 设置视图，CSS display 切换（零路由） */
+.view { padding: 14px; }
+.view[hidden] { display: none; }
+
 .brand { display: flex; align-items: center; gap: 10px; }
 
 /* 「文」字标识：金丝雀黄底 + 深色线条 */
@@ -414,6 +452,116 @@ button, input, select { font-family: inherit; }
 /* 已选部分填充（WebKit 需要 JS 同步，这里用 accent 兜底） */
 .slider input[type=range] { accent-color: #1c1c1e; }
 
+/* --------------------------------------------------- 术语表（设置视图卡片） */
+
+/* 分区小标题：设置视图各卡片顶部 */
+.sec-title {
+  padding: 2px 4px 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  color: var(--ink-muted);
+}
+
+.gloss { gap: 6px; }
+
+.gloss-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 26px;
+  padding: 0 2px;
+}
+
+.gloss-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.gloss-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.gloss-hint {
+  margin: 0;
+  padding: 0 4px 6px;
+  font-size: 10.5px;
+  color: var(--ink-muted);
+}
+
+.gloss-sec-title {
+  padding: 2px 10px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: var(--ink-muted);
+}
+
+.gloss-list {
+  padding: 0 4px 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.gloss-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.gloss-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.gloss-count {
+  font-size: 10.5px;
+  color: var(--ink-muted);
+}
+
+.gloss-desc {
+  margin: 0 0 6px 28px;  /* 与开关右缘对齐 */
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+
+#customGlossRow {
+  margin: 0 4px;
+}
+
+#customGlossaryInput {
+  display: block;
+  width: calc(100% - 8px);
+  margin: 0 4px 4px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--canvas);
+  color: var(--ink);
+  font-size: 11.5px;
+  line-height: 1.6;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+}
+#customGlossaryInput:focus { border-color: var(--blue); }
+@media (prefers-color-scheme: dark) {
+  #customGlossaryInput { background: var(--surface-2); border-color: var(--line); }
+}
+
 /* ------------------------------------------------------------ 服务卡 */
 
 .svc { gap: 8px; }
@@ -491,9 +639,9 @@ button, input, select { font-family: inherit; }
   .addr { background: var(--surface-2); border-color: var(--line); }
 }
 
-/* --------------------------------------------------- PDF 入口（黄底） */
+/* --------------------------------------------------- 文档入口（黄底） */
 
-.pdf-row {
+.doc-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -507,6 +655,84 @@ button, input, select { font-family: inherit; }
   text-decoration: none;
   cursor: pointer;
 }
-.pdf-row:hover { filter: brightness(.98); }
-.pdf-row span { flex: 1; }
-.pdf-row svg { display: block; flex-shrink: 0; }
+.doc-row:hover { filter: brightness(.98); }
+.doc-row span { flex: 1; }
+.doc-row svg { display: block; flex-shrink: 0; }
+
+/* --------------------------------------------------- 字幕导出按钮 */
+
+.sub-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 32px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color .15s ease, color .15s ease;
+}
+.sub-row:hover { border-color: var(--teal); color: var(--teal-dark); }
+.sub-row svg { display: block; }
+
+/* --------------------------------------------------- 译文样式：配色预设 */
+
+.preset-lab {
+  padding: 2px 4px 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  color: var(--ink-muted);
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 2px 4px;
+}
+
+.preset-swatch {
+  position: relative;
+  height: 34px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  padding: 0;
+  transition: transform .1s ease, box-shadow .15s ease;
+}
+.preset-swatch:hover { transform: translateY(-1px); }
+.preset-swatch.selected {
+  box-shadow: 0 0 0 2px var(--canvas), 0 0 0 4px var(--blue);
+}
+
+/* 色块里的小字示例（bg 深时自动反色） */
+.preset-swatch::after {
+  content: "Aa";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
+}
+
+/* 颜色选择胶囊：color input 覆盖在胶囊右侧 */
+.color-chip input[type=color] {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+.color-chip input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; }
+.color-chip input[type=color]::-webkit-color-swatch { border-radius: 5px; border: 1px solid var(--line); }

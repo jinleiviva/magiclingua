@@ -57,6 +57,54 @@ class VideoAdapter {
         } else {
             this.startObserving();
         }
+        // 字幕导出：popup「导出双语字幕」→ 这里组装 SRT 回传（数据在 this.groups + trackTranslations）
+        chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+            if (request.action === 'exportSubtitles') {
+                sendResponse(this.handleExportSubtitles(!!request.probe));
+            }
+            return false;
+        });
+    }
+
+    /** 导出双语 SRT。probe=true 只探测可用性，不组装全文。 */
+    handleExportSubtitles(probe) {
+        if (!this.trackMode || !this.groups || !this.groups.length) {
+            return { ok: false, available: false, error: 'no_subtitle_track' };
+        }
+        if (probe) return { ok: true, available: true };
+
+        const onlyTrans = !!(this.core && this.core.config && this.core.config.displayMode === 'replace');
+        const lines = [];
+        this.groups.forEach((g, idx) => {
+            const tr = this.trackTranslations.get(idx);
+            const text = g.text || '';
+            lines.push(String(idx + 1));
+            lines.push(`${this.formatSrtTime(g.start)} --> ${this.formatSrtTime(g.start + g.dur)}`);
+            if (onlyTrans) {
+                // 仅译文；译文未就绪时原文兜底，保证字幕不空
+                lines.push(tr || text);
+            } else {
+                lines.push(text);
+                if (tr) lines.push(tr);
+            }
+            lines.push('');
+        });
+
+        const name = (document.title || 'subtitles')
+            .replace(/[\\/:*?"<>|]/g, '').trim().slice(0, 80) || 'subtitles';
+        return { ok: true, available: true, srtText: lines.join('\n'), name };
+    }
+
+    /** 毫秒 -> SRT 时间轴 HH:MM:SS,mmm */
+    formatSrtTime(ms) {
+        const total = Math.max(0, Math.round(ms));
+        const h = Math.floor(total / 3600000);
+        const m = Math.floor((total % 3600000) / 60000);
+        const s = Math.floor((total % 60000) / 1000);
+        const milli = total % 1000;
+        const p = n => String(n).padStart(2, '0');
+        const p3 = n => String(n).padStart(3, '0');
+        return `${p(h)}:${p(m)}:${p(s)},${p3(milli)}`;
     }
 
     bindNavigationEvents() {
@@ -479,6 +527,13 @@ class VideoAdapter {
     }
 
     startPositionSync(overlay, player) {
+        // 控制栏显隐联动是 YouTube 专属逻辑（ytp-autohide 类）。
+        // 其他视频站没有这个类，rAF 循环只会白白空转——用固定位置即可。
+        if (!this.config.controlsAware) {
+            overlay.style.bottom = this.config.overlayBottom || '85px';
+            return;
+        }
+
         if (this.syncLoop) return;
 
         const loop = () => {
