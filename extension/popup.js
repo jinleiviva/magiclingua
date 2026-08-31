@@ -81,8 +81,9 @@ const pageTranslateBtn = document.getElementById('pageTranslateBtn');
 
 // 术语表
 const glossCard = document.getElementById('glossCard');
-const glossCount = document.getElementById('glossCount');
 const builtinGlossList = document.getElementById('builtinGlossList');
+const customGlossRow = document.getElementById('customGlossRow');
+const customGlossSwitch = document.getElementById('customGlossSwitch');
 const customGlossToggle = document.getElementById('customGlossToggle');
 const customGlossCount = document.getElementById('customGlossCount');
 const customGlossaryInput = document.getElementById('customGlossaryInput');
@@ -232,7 +233,7 @@ function loadConfig() {
         renderBuiltinGlossaries(config.activeGlossaries);
         customGlossToggle.checked = config.customGlossaryEnabled !== false;
         customGlossaryInput.value = glossaryToText(config.customGlossary);
-        updateGlossCount(config);
+        updateCustomGlossCount(config);
     });
 }
 
@@ -298,11 +299,7 @@ function renderBuiltinGlossaries(activeIds) {
 
         row.append(sw, name, count);
 
-        const desc = document.createElement('div');
-        desc.className = 'gloss-desc';
-        desc.textContent = g.desc;
-
-        builtinGlossList.append(row, desc);
+        builtinGlossList.append(row);
     }
 }
 
@@ -391,27 +388,8 @@ function downloadText(filename, text, mime, bom) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/** 当前生效的条目总数（勾选词库 + 开启的自定义），用于 summary 角标 */
-function countActiveEntries(config) {
-    const active = Array.isArray(config.activeGlossaries) ? config.activeGlossaries : [];
-    let n = 0;
-    for (const g of globalThis.BUILTIN_GLOSSARIES || []) {
-        if (active.includes(g.id)) n += g.entries.length;
-    }
-    if (config.customGlossaryEnabled !== false && config.customGlossary) {
-        n += Object.keys(config.customGlossary).length;
-    }
-    return Math.min(n, GLOSSARY_MAX_ENTRIES);
-}
-
-function updateGlossCount(config) {
-    const active = Array.isArray(config.activeGlossaries) ? config.activeGlossaries : [];
-    const n = countActiveEntries(config);
-    const parts = [];
-    if (active.length) parts.push(`${active.length} 个词库`);
-    parts.push(`生效 ${n} 条`);
-    glossCount.textContent = parts.join(' · ');
-
+/** 自定义条目行的条数角标（内置词库行内已各自显示条数，此处只更新自定义） */
+function updateCustomGlossCount(config) {
     const customN = config.customGlossary ? Object.keys(config.customGlossary).length : 0;
     customGlossCount.textContent = customN ? `${customN} 条` : '';
 }
@@ -551,7 +529,7 @@ function attachEventListeners() {
             }
             const newConfig = { ...config, activeGlossaries: active };
             saveConfig({ activeGlossaries: active });
-            updateGlossCount(newConfig);
+            updateCustomGlossCount(newConfig);
         });
     });
 
@@ -560,8 +538,21 @@ function attachEventListeners() {
         chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
             const newConfig = { ...config, customGlossaryEnabled: customGlossToggle.checked };
             saveConfig({ customGlossaryEnabled: customGlossToggle.checked });
-            updateGlossCount(newConfig);
+            updateCustomGlossCount(newConfig);
         });
+    });
+
+    // 术语表：点击「自定义条目」行展开/收起输入框（平时收起，按下才编辑）
+    customGlossRow.addEventListener('click', () => {
+        customGlossaryInput.hidden = !customGlossaryInput.hidden;
+        if (!customGlossaryInput.hidden) customGlossaryInput.focus();
+    });
+
+    // 术语表：开关点击（div 不再 label，点 .track/.knob 不会触发 checkbox，需要手动处理）
+    customGlossSwitch.addEventListener('click', (e) => {
+        if (e.target === customGlossToggle) return; // 点 input 本身，由 input 自然 toggle
+        customGlossToggle.checked = !customGlossToggle.checked;
+        customGlossToggle.dispatchEvent(new Event('change'));
     });
 
     // 术语表：自定义条目失焦/收起时解析保存；第一次写入内容时自动开启
@@ -577,7 +568,7 @@ function attachEventListeners() {
             }
             const newConfig = { ...config, ...updates };
             saveConfig(updates);
-            updateGlossCount(newConfig);
+            updateCustomGlossCount(newConfig);
         });
     });
 
@@ -623,7 +614,7 @@ function attachEventListeners() {
                 const newConfig = { ...config, ...updates };
                 saveConfig(updates);
                 customGlossaryInput.value = glossaryToText(merged);
-                updateGlossCount(newConfig);
+                updateCustomGlossCount(newConfig);
                 flashCsvBtn(importCsvBtn, `导入 ${Object.keys(imported).length} 条 ✓`);
             });
         };
