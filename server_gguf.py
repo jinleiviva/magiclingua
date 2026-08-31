@@ -2107,7 +2107,8 @@ PDF_PAGE = r"""<!DOCTYPE html>
 <style>
   * { box-sizing: border-box; }
   :root {
-    --canvas:#ffffff; --surface:#f7f8fa; --ink:#1c1c1e; --ink-soft:#555a6a; --ink-muted:#8e91a0;
+    --canvas:#ffffff; --surface:#f7f8fa; --surface-2:#f2f4f8; --surface-3:#e9ecf1;
+    --ink:#1c1c1e; --ink-soft:#555a6a; --ink-muted:#8e91a0;
     --line:#e0e2e8; --line-soft:#eef0f3;
     --yellow:#ffd02f; --yellow-light:#fff4c4; --surface-yellow:#fff8e0; --yellow-dark:#746019; --yellow-line:#ffe9b0;
     --blue:#4262ff; --teal:#0fbcb0; --teal-light:#c3faf5; --teal-dark:#0a8a82; --coral:#c0392b;
@@ -2146,6 +2147,7 @@ PDF_PAGE = r"""<!DOCTYPE html>
   .card {
     background: var(--canvas); border: 1px solid var(--line-soft);
     border-radius: 16px; padding: 24px; margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, .05);
   }
   h2 { font-size: 15px; font-weight: 600; margin: 0 0 14px;
        display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -2263,12 +2265,13 @@ PDF_PAGE = r"""<!DOCTYPE html>
   .badge-err  { background: #ffe5e5; color: var(--coral); }
 
   .btn-ghost {
-    background: var(--canvas); color: var(--ink-soft); border: 1px solid var(--line);
+    background: var(--surface-2); color: var(--ink-soft); border: 1px solid transparent;
     padding: 7px 14px; font-size: 13px; border-radius: 999px;
+    transition: background .15s ease, color .15s ease;
   }
-  .btn-ghost:hover { background: var(--surface); }
-  .btn-danger { background: var(--canvas); color: var(--coral); border: 1px solid #f0c8c8; padding: 7px 14px; font-size: 13px; border-radius: 999px; }
-  .btn-danger:hover { background: #fff5f5; }
+  .btn-ghost:hover { background: var(--surface-3); color: var(--ink); }
+  .btn-danger { background: #ffe5e5; color: var(--coral); border: 1px solid transparent; padding: 7px 14px; font-size: 13px; border-radius: 999px; transition: background .15s ease; }
+  .btn-danger:hover { background: #f7d2d2; }
   .empty { color: var(--ink-muted); font-size: 13px; padding: 14px; text-align: center; }
 
   ul { margin: 0; padding-left: 20px; color: var(--ink-soft); font-size: 13.5px; }

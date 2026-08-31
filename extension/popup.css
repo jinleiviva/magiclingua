@@ -8,6 +8,7 @@ MagicLingua · 插件面板
   --canvas: #ffffff;
   --surface: #f7f8fa;
   --surface-2: #f2f4f8;
+  --surface-3: #e9ecf1;
   --ink: #1c1c1e;
   --ink-soft: #555a6a;
   --ink-muted: #8e91a0;
@@ -39,6 +40,7 @@ MagicLingua · 插件面板
     --canvas: #050038;
     --surface: #191448;
     --surface-2: #1e1a4c;
+    --surface-3: #26215e;
     --ink: #ffffff;
     --ink-soft: #a5a8b5;
     --ink-muted: #7c7f8c;
@@ -293,6 +295,7 @@ button, input, select { font-family: inherit; }
   display: flex;
   flex-direction: column;
   gap: 8px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .03);
 }
 @media (prefers-color-scheme: dark) {
   .card { background: var(--surface); border-color: var(--line); }
@@ -307,8 +310,8 @@ button, input, select { font-family: inherit; }
   height: 36px;
   padding: 0 8px 0 10px;
   border-radius: var(--r-md);
-  background: var(--canvas);
-  border: 1px solid var(--line);
+  background: var(--surface-2);
+  border: 1px solid transparent;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -319,8 +322,10 @@ button, input, select { font-family: inherit; }
   user-select: none;
   transition: background .15s ease, border-color .15s ease;
 }
+.pill:hover { background: var(--surface-3); }
 @media (prefers-color-scheme: dark) {
-  .pill { background: var(--surface-2); border-color: var(--line); }
+  .pill { background: var(--surface-2); border-color: transparent; }
+  .pill:hover { background: var(--surface-3); }
 }
 .pill > span:first-child {
   overflow: hidden;
@@ -344,16 +349,19 @@ button, input, select { font-family: inherit; }
   height: 36px;
   padding: 0 8px 0 10px;
   border-radius: var(--r-md);
-  background: var(--canvas);
-  border: 1px solid var(--line);
+  background: var(--surface-2);
+  border: 1px solid transparent;
   display: flex;
   align-items: center;
   gap: 6px;
   position: relative;
   cursor: pointer;
+  transition: background .15s ease;
 }
+.chip:hover { background: var(--surface-3); }
 @media (prefers-color-scheme: dark) {
-  .chip { background: var(--surface-2); border-color: var(--line); }
+  .chip { background: var(--surface-2); border-color: transparent; }
+  .chip:hover { background: var(--surface-3); }
 }
 .chip-lab {
   font-size: 12px;
@@ -400,15 +408,15 @@ button, input, select { font-family: inherit; }
   height: 36px;
   padding: 0 10px;
   border-radius: var(--r-md);
-  background: var(--canvas);
-  border: 1px solid var(--line);
+  background: var(--surface-2);
+  border: 1px solid transparent;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 4px;
 }
 @media (prefers-color-scheme: dark) {
-  .slider { background: var(--surface-2); border-color: var(--line); }
+  .slider { background: var(--surface-2); border-color: transparent; }
 }
 .sl-top {
   display: flex;
@@ -573,12 +581,12 @@ button, input, select { font-family: inherit; }
   height: 36px;
   padding: 0 10px;
   border-radius: var(--r-md);
-  background: var(--canvas);
-  border: 1px solid var(--line);
+  background: var(--surface-2);
+  border: 1px solid transparent;
   cursor: default;
 }
 @media (prefers-color-scheme: dark) {
-  .svc-row { background: var(--surface-2); border-color: var(--line); }
+  .svc-row { background: var(--surface-2); border-color: transparent; }
 }
 /* 运行状态色：默认 teal=运行中，停止=灰，加载中=黄 */
 .svc-row.svc-off .svc-dot { background: var(--ink-muted); }
@@ -624,21 +632,23 @@ button, input, select { font-family: inherit; }
   flex-shrink: 0;
   padding: 6px 10px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--line);
-  background: var(--canvas);
+  border: 1px solid transparent;
+  background: var(--surface-2);
   color: var(--ink-soft);
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
+  transition: background .15s ease, color .15s ease;
 }
-.btn-ghost:hover { background: var(--surface-2); }
+.btn-ghost:hover { background: var(--surface-3); color: var(--ink); }
 .btn-ghost:disabled { opacity: .5; cursor: not-allowed; }
 /* 停止态：JS 通过 is-danger 控制 */
-.btn-ghost.is-danger { color: var(--danger); border-color: var(--coral-light); }
+.btn-ghost.is-danger { color: var(--danger); background: var(--coral-light); }
 @media (prefers-color-scheme: dark) {
-  .btn-ghost { background: var(--line); border-color: var(--line); color: var(--ink-soft); }
-  .btn-ghost.is-danger { color: var(--coral-dark); border-color: var(--coral-light); }
+  .btn-ghost { background: var(--surface-2); color: var(--ink-soft); }
+  .btn-ghost:hover { background: var(--surface-3); }
+  .btn-ghost.is-danger { color: var(--coral-dark); background: var(--coral-light); }
 }
 
 .addr {
