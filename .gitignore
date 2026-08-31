@@ -9,6 +9,7 @@ venv/
 # ----- 运行时产物（不要进版本库）-----
 models/
 pdf_jobs/
+doc_jobs/
 config.json
 log_server.txt
 debug_config.log

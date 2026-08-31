@@ -24,9 +24,11 @@ import tempfile
 import threading
 import time
 import uuid
+import zipfile
+
+from html.parser import HTMLParser
 
 from flask import Flask, Response, jsonify, request, send_file
-from flask_cors import CORS
 from llama_cpp import Llama
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -40,12 +42,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)
+# 刻意不使用 flask_cors（默认放行所有来源）：任何网页的 JS 都能直接 POST
+# 本地端口——白嫖推理打满 CPU、调 /shutdown 关服务、传 PDF 占磁盘。
+# 来源白名单见下方 _origin_guard。
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 PDF_JOBS = {}
 PDF_JOBS_FILE = os.path.join(BASE_DIR, "pdf_jobs", "jobs.json")
+
+# 轻量文档翻译任务（TXT / SRT / ASS / EPUB，标准库实现，不走 BabelDOC）
+DOC_JOBS = {}
+DOC_JOBS_DIR = os.path.join(BASE_DIR, "doc_jobs")
 
 # --------------------------------------------------------------------------
 # PDF 上传暂存 + 目录缓存
@@ -203,6 +211,26 @@ _active_jobs = 0
 
 # 探活/查状态类请求不算「使用」，否则插件开着面板就永远退不出去
 _NO_TOUCH_PATHS = ("/health", "/v1/status", "/v1/models", "/v1/config")
+
+
+# 来源白名单。Origin 是浏览器保护的请求头，网页 JS 伪造不了，可靠：
+#   放行 ① 扩展自身（chrome-extension:// / moz-extension://，ID 随目录路径
+#          变化，不做精确匹配——任意扩展来源都比任意网页可信）；
+#        ② 本服务自己的页面（/pdf 等同源 POST 也带 Origin）；
+#        ③ 无 Origin 的请求（curl / test_api.py / 本地脚本等非浏览器客户端）。
+#   其余一律 403：浏览器跨源请求全部拦下；DNS rebinding 的请求 Origin 是
+#   攻击者域名，同样被拦。（扩展 ID 无法预先写死：开发者模式 ID 由目录哈希决定）
+@app.before_request
+def _origin_guard():
+    origin = request.headers.get("Origin", "")
+    if not origin:
+        return None
+    if origin.startswith(("chrome-extension://", "moz-extension://")):
+        return None
+    if origin in (f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"):
+        return None
+    logger.warning(f"已拒绝跨源请求: Origin={origin} path={request.path}")
+    return jsonify({"error": "forbidden_origin", "origin": origin}), 403
 
 
 @app.before_request
@@ -367,19 +395,35 @@ user_config = load_config()
 # Prompt 构造（统一收在服务端，三个场景共用）
 # --------------------------------------------------------------------------
 
+# HY-MT 官方支持的语言表（33 语种 + 5 民汉变体，含常用别名）。
+# LANG_NAMES：长文 prompt 用的英文名；LANG_NAMES_ZH：官方极简模板用中文名。
 LANG_NAMES = {
-    "zh": "Chinese", "zh-cn": "Chinese", "zh-CN": "Chinese",
-    "en": "English", "en-us": "English",
+    "zh": "Chinese", "zh-cn": "Chinese (Simplified)", "zh-CN": "Chinese (Simplified)",
+    "zh-hant": "Traditional Chinese", "zh-Hant": "Traditional Chinese",
+    "yue": "Cantonese", "en": "English", "en-us": "English",
     "ja": "Japanese", "ko": "Korean", "fr": "French",
-    "de": "German", "es": "Spanish", "ru": "Russian",
+    "de": "German", "es": "Spanish", "pt": "Portuguese", "it": "Italian",
+    "ru": "Russian", "uk": "Ukrainian", "pl": "Polish", "cs": "Czech", "nl": "Dutch",
+    "tr": "Turkish", "ar": "Arabic", "fa": "Persian", "he": "Hebrew",
+    "hi": "Hindi", "ur": "Urdu", "bn": "Bengali", "gu": "Gujarati",
+    "mr": "Marathi", "ta": "Tamil", "te": "Telugu",
+    "th": "Thai", "vi": "Vietnamese", "id": "Indonesian", "ms": "Malay",
+    "tl": "Filipino", "km": "Khmer", "my": "Burmese",
+    "bo": "Tibetan", "kk": "Kazakh", "mn": "Mongolian", "ug": "Uyghur",
 }
-
-# HY-MT 官方模板用的目标语言中文名
 LANG_NAMES_ZH = {
-    "zh": "中文", "zh-cn": "中文", "zh-cn": "中文",
+    "zh": "中文", "zh-cn": "中文", "zh-CN": "中文",
+    "zh-hant": "繁体中文", "zh-Hant": "繁体中文", "yue": "粤语",
     "en": "英文", "en-us": "英文",
     "ja": "日文", "ko": "韩文", "fr": "法文",
-    "de": "德文", "es": "西班牙文", "ru": "俄文",
+    "de": "德文", "es": "西班牙文", "pt": "葡萄牙文", "it": "意大利文",
+    "ru": "俄文", "uk": "乌克兰文", "pl": "波兰文", "cs": "捷克文", "nl": "荷兰文",
+    "tr": "土耳其文", "ar": "阿拉伯文", "fa": "波斯文", "he": "希伯来文",
+    "hi": "印地文", "ur": "乌尔都文", "bn": "孟加拉文", "gu": "古吉拉特文",
+    "mr": "马拉地文", "ta": "泰米尔文", "te": "泰卢固文",
+    "th": "泰文", "vi": "越南文", "id": "印尼文", "ms": "马来文",
+    "tl": "菲律宾文", "km": "高棉文", "my": "缅甸文",
+    "bo": "藏文", "kk": "哈萨克文", "mn": "蒙古文", "ug": "维吾尔文",
 }
 
 # 反音译指令：HY-MT 1.8B 在短标题/专有名词上倾向音译（如 angst -> 安格斯），
@@ -419,7 +463,8 @@ def build_translate_prompt(text, target_lang="zh", context=None, glossary=None):
     ]
 
     if glossary:
-        lines = [f"- {k} = {v}" for k, v in list(glossary.items())[:40]]
+        # 上限与客户端（background.js GLOSSARY_MAX_ENTRIES）一致，防 prompt 过长
+        lines = [f"- {k} = {v}" for k, v in list(glossary.items())[:80]]
         parts += ["", "GLOSSARY (use these exact translations):", *lines]
 
     if context:
@@ -558,6 +603,66 @@ def shutdown():
 # 翻译端点（三个场景统一走这里）
 # --------------------------------------------------------------------------
 
+def estimate_max_tokens(text, floor=512, cap=4096):
+    """按输入长度动态放宽输出 token 上限。
+
+    旧逻辑固定 512：长段落译文会被静默截断，用户看到半句话且无任何报错。
+    译文 token 数与原文长度大致同量级，len*2 已留足余量；
+    cap 4096 是因为 n_ctx 默认 8192，还要给系统 prompt 留空间。
+    """
+    return max(floor, min(len(text) * 2, cap))
+
+
+def _infer_translate(text, target_lang, context=None, glossary=None, max_tokens=None):
+    """单条翻译的完整推理流程（含指令回显低温重试）。单条与批量端点共用。
+
+    回显重试仍救不回来时抛 ValueError("translation_garbled")，由调用方决定返回方式。
+    """
+    prompt = build_translate_prompt(text, target_lang, context, glossary)
+    mt = max_tokens or estimate_max_tokens(text)
+
+    with inference_lock:
+        response = llm(
+            prompt,
+            max_tokens=mt,
+            temperature=0.3,
+            top_p=0.6,
+            top_k=20,
+            repeat_penalty=1.05,
+            echo=False,
+            stop=ECHO_STOP,
+        )
+
+    # 输出顶满上限说明译文被掐断（动态计算后仍可能撞 cap），留下日志便于排查
+    if response["choices"][0].get("finish_reason") == "length":
+        logger.warning(f"译文可能被截断: max_tokens={mt}, finish_reason=length")
+
+    translation = clean_translation(response["choices"][0]["text"])
+
+    # 指令回显防护：检测到废译文就用官方极简模板低温重试一次
+    if looks_like_echo(translation, text):
+        logger.warning(f"检测到指令回显({len(translation)}字符)，低温重试")
+        target_zh = LANG_NAMES_ZH.get(str(target_lang).lower(), "中文")
+        retry_prompt = f"把下面的文本翻译成{target_zh}，不要额外解释。\n{text}"
+        with inference_lock:
+            response = llm(
+                retry_prompt,
+                max_tokens=max(128, len(text) * 2),
+                temperature=0.1,
+                top_p=0.6,
+                top_k=20,
+                repeat_penalty=1.05,
+                echo=False,
+                stop=ECHO_STOP,
+            )
+        translation = clean_translation(response["choices"][0]["text"])
+        if looks_like_echo(translation, text):
+            logger.error("重试仍为回显，放弃本次译文")
+            raise ValueError("translation_garbled")
+
+    return translation
+
+
 @app.route("/v1/translate", methods=["POST"])
 def translate():
     """
@@ -592,72 +697,230 @@ def translate():
             "elapsed": 0,
         })
 
-    prompt = build_translate_prompt(text, target_lang, context, glossary)
     started = time.time()
 
+    # 客户端未显式传 max_tokens 时按输入长度动态计算，避免长段落截断
+    max_tokens = data.get("max_tokens") or estimate_max_tokens(text)
+
     if stream:
+        prompt = build_translate_prompt(text, target_lang, context, glossary)
         return Response(
-            stream_translation(prompt),
+            stream_translation(prompt, max_tokens),
             mimetype="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     try:
-        with inference_lock:
-            response = llm(
-                prompt,
-                max_tokens=data.get("max_tokens", 512),
-                temperature=0.3,
-                top_p=0.6,
-                top_k=20,
-                repeat_penalty=1.05,
-                echo=False,
-                stop=ECHO_STOP,
-            )
-        raw = response["choices"][0]["text"]
-        translation = clean_translation(raw)
+        translation = _infer_translate(text, target_lang, context, glossary, max_tokens)
         elapsed = time.time() - started
-
-        # 指令回显防护：检测到废译文就用官方极简模板低温重试一次
-        if looks_like_echo(translation, text):
-            logger.warning(f"检测到指令回显({len(translation)}字符)，低温重试")
-            target_zh = LANG_NAMES_ZH.get(str(target_lang).lower(), "中文")
-            retry_prompt = f"把下面的文本翻译成{target_zh}，不要额外解释。\n{text}"
-            with inference_lock:
-                response = llm(
-                    retry_prompt,
-                    max_tokens=max(128, len(text) * 2),
-                    temperature=0.1,
-                    top_p=0.6,
-                    top_k=20,
-                    repeat_penalty=1.05,
-                    echo=False,
-                    stop=ECHO_STOP,
-                )
-            translation = clean_translation(response["choices"][0]["text"])
-            if looks_like_echo(translation, text):
-                logger.error("重试仍为回显，放弃本次译文")
-                return jsonify({"error": "translation_garbled", "elapsed": round(time.time() - started, 3)}), 502
-
         logger.info(f"翻译完成 {elapsed:.2f}s ({len(text)} -> {len(translation)} 字符)")
         return jsonify({
             "translation": translation,
             "skipped": False,
             "elapsed": round(elapsed, 3),
         })
+    except ValueError as e:
+        if str(e) == "translation_garbled":
+            return jsonify({"error": "translation_garbled", "elapsed": round(time.time() - started, 3)}), 502
+        raise
     except Exception as e:
         logger.error(f"翻译失败: {e}")
         return jsonify({"error": str(e)}), 500
 
 
-def stream_translation(prompt):
+# --------------------------------------------------------------------------
+# 批量翻译：整页翻译的提速来源。多条文本合并成一次推理，
+# 摊薄每条一次的完整 prefill + 请求开销（原来 40 段 = 40 次完整推理）。
+# --------------------------------------------------------------------------
+
+BATCH_MAX_ITEMS = 20          # 单批条数上限（沉浸式翻译为 25，这里保守一些）
+BATCH_MAX_TOTAL_CHARS = 4000  # 单批总字符上限，给 n_ctx=8192 留出输出空间
+
+# 条目自带的行首编号会干扰拆号解析，统一剥掉
+_LEADING_NUMBER_RE = re.compile(r"^\s*\(?\d{1,2}\s*[.、．)）:：]\s*")
+# 输出解析：行首编号（兼容 1. / 1、 / 1) / (1) / 1：等写法）
+_NUMBER_LINE_RE = re.compile(r"^\s*\(?(?P<num>\d{1,2})\s*[.、．)）:：]\s*(?P<body>.*)$")
+
+
+def build_batch_prompt(texts, target_zh):
+    """编号协议 prompt。
+
+    第一行保持 HY-MT 官方极简模板原文（分布内），编号说明放第二行；
+    条目内部的换行统一压平，避免破坏「每条一行」的结构。
+    """
+    lines = [
+        f"把下面的文本翻译成{target_zh}，不要额外解释。",
+        f"原文共{len(texts)}条，每条以数字编号开头。逐条翻译，输出也用同样的数字编号，每条译文一行。",
+    ]
+    for i, text in enumerate(texts, 1):
+        flat = " ".join(text.split())
+        flat = _LEADING_NUMBER_RE.sub("", flat).strip()
+        if not flat:
+            flat = text.strip() or " "
+        lines.append(f"{i}. {flat}")
+    return "\n".join(lines)
+
+
+def parse_numbered_output(raw, count):
+    """按编号把模型的输出拆回单条译文。
+
+    返回 {序号: 译文或None}。解析不到的条目为 None，由调用方降级单条重翻。
+    """
+    pieces = {}
+    current = None
+    buf = []
+    for line in raw.splitlines():
+        m = _NUMBER_LINE_RE.match(line)
+        if m and 1 <= int(m.group("num")) <= count:
+            if current is not None:
+                pieces[current] = " ".join(buf).strip()
+            current = int(m.group("num"))
+            buf = [m.group("body")]
+        elif current is not None:
+            buf.append(line)
+    if current is not None:
+        pieces[current] = " ".join(buf).strip()
+
+    result = {}
+    for i in range(1, count + 1):
+        piece = pieces.get(i) or ""
+        result[i] = clean_translation(piece) if piece.strip() else None
+    return result
+
+
+@app.route("/v1/translate/batch", methods=["POST"])
+def translate_batch():
+    """
+    批量翻译端点：一次推理翻多条。
+
+    body: {
+      "items":       [{"id": "p0", "text": "..."}],   # id 原样回传，类型不限
+      "target_lang": "zh"
+    }
+    resp: {
+      "translations": {"p0": "译文", ...},   # 一定包含每个 id（含 skipped 的原文）
+      "skipped":      {"p1": true, ...},     # 源语言与目标语言一致而跳过的条目
+      "fallbacks":    2,                     # 编号解析失败降级单条重翻的条数
+      "elapsed":      1.23
+    }
+
+    编号协议对 1.8B 小模型是分布外输入：拆号失败或疑似回显的条目
+    自动降级走单条翻译链路（含回显重试），保证每条都有结果或明确报错。
+    """
+    if llm is None:
+        return jsonify({"error": "Model not loaded"}), 503
+
+    data = request.json or {}
+    raw_items = data.get("items") or []
+    target_lang = data.get("target_lang") or user_config.get("target_lang", "zh")
+    started = time.time()
+
+    if not raw_items:
+        return jsonify({"error": "No items provided"}), 400
+    if len(raw_items) > BATCH_MAX_ITEMS:
+        return jsonify({"error": f"Too many items (max {BATCH_MAX_ITEMS})"}), 400
+
+    # 规范化 + 按文本去重（同文本只翻一次，结果回填到所有相同 id）
+    items = []
+    seen = {}
+    for item in raw_items:
+        if not isinstance(item, dict) or "text" not in item:
+            return jsonify({"error": "Each item must be an object with 'text'"}), 400
+        text = (item.get("text") or "").strip()
+        if not text:
+            return jsonify({"error": "Item text is empty"}), 400
+        if len(text) > 5000:
+            return jsonify({"error": "Item text too long (max 5000 chars)"}), 400
+        if text in seen:
+            seen[text].append(item.get("id"))
+        else:
+            seen[text] = [item.get("id")]
+            items.append(text)
+
+    total_chars = sum(len(t) for t in items)
+    if total_chars > BATCH_MAX_TOTAL_CHARS:
+        return jsonify({
+            "error": f"Batch too large: {total_chars} chars (max {BATCH_MAX_TOTAL_CHARS})"
+        }), 400
+
+    translations = {}   # id -> 译文
+    skipped = {}        # id -> True（同语言跳过）
+    to_translate = []   # [(index, text)] 需要真正推理的
+
+    for text in items:
+        if is_same_language(text, target_lang):
+            for iid in seen[text]:
+                translations[str(iid)] = text
+                skipped[str(iid)] = True
+        else:
+            to_translate.append(text)
+
+    fallbacks = 0
+    if to_translate:
+        target_zh = LANG_NAMES_ZH.get(str(target_lang).lower(), "中文")
+        prompt = build_batch_prompt(to_translate, target_zh)
+        # 输出上限 = 各条估和（宁多勿少，避免批次内后面的条目被掐断）
+        max_tokens = max(256, min(sum(len(t) for t in to_translate) * 2 + 64 * len(to_translate), 4096))
+
+        try:
+            with inference_lock:
+                response = llm(
+                    prompt,
+                    max_tokens=max_tokens,
+                    temperature=0.3,
+                    top_p=0.6,
+                    top_k=20,
+                    repeat_penalty=1.05,
+                    echo=False,
+                    stop=ECHO_STOP,
+                )
+            parsed = parse_numbered_output(response["choices"][0]["text"], len(to_translate))
+        except Exception as e:
+            logger.error(f"批量推理失败: {e}")
+            parsed = {}
+
+        # 解析失败 / 疑似回显的条目降级为单条翻译（含回显重试链路）
+        retry_texts = []
+        for idx, text in enumerate(to_translate, 1):
+            piece = parsed.get(idx)
+            if not piece or looks_like_echo(piece, text):
+                retry_texts.append(text)
+            else:
+                for iid in seen[text]:
+                    translations[str(iid)] = piece
+
+        for text in retry_texts:
+            fallbacks += 1
+            try:
+                piece = _infer_translate(text, target_lang)
+                for iid in seen[text]:
+                    translations[str(iid)] = piece
+            except ValueError:
+                logger.error(f"批量降级重翻仍为回显: {text[:40]}...")
+            except Exception as e:
+                logger.error(f"批量降级重翻失败: {e}")
+
+    elapsed = time.time() - started
+    logger.info(
+        f"批量翻译完成 {elapsed:.2f}s: {len(raw_items)}条 / {len(items)}去重 / "
+        f"{fallbacks}条降级重翻 ({total_chars}字符)"
+    )
+    return jsonify({
+        "translations": translations,
+        "skipped": skipped,
+        "fallbacks": fallbacks,
+        "elapsed": round(elapsed, 3),
+    })
+
+
+def stream_translation(prompt, max_tokens=512):
     """SSE 流式输出，YouTube 字幕逐字显示。"""
     def generate():
         try:
             with inference_lock:
                 for chunk in llm(
                     prompt,
-                    max_tokens=512,
+                    max_tokens=max_tokens,
                     temperature=0.3,
                     top_p=0.6,
                     top_k=20,
@@ -1393,6 +1656,445 @@ def pdf_jobs_delete(job_id):
 
 
 # --------------------------------------------------------------------------
+# 轻量文档翻译（TXT / SRT / ASS / EPUB）
+#
+# 与 PDF 管线并列的第二种文件翻译路径：不依赖 BabelDOC，
+# 纯标准库解析 + 复用 _infer_translate 逐段推理。
+#   TXT  -> 双语 txt（原文行 + 译文行）
+#   SRT  -> 双语 SRT（原文行 + 译文行，时间轴不变）
+#   ASS  -> 双语 ASS（每条 Dialogue 拆成原文/译文两行）
+#   EPUB -> 双语 EPUB（原文保留，译文以 <p class="hy-mt-tr"> 追加；mono 则替换文本）
+# --------------------------------------------------------------------------
+
+# 文档翻译中需要做逐段翻译的 HTML 块级标签（与整页翻译的段落选择一致）
+_DOC_BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote"}
+
+
+def _doc_split_paragraphs(text):
+    """TXT：按空行分段。"""
+    paras = []
+    for block in re.split(r"\n\s*\n", text or ""):
+        block = block.strip()
+        if block:
+            paras.append(block)
+    return paras
+
+
+def _doc_srt_ms(h, m, s, ms):
+    return ((h * 60 + m) * 60 + s) * 1000 + ms
+
+
+def _doc_srt_fmt(ms):
+    ms = max(0, int(round(ms)))
+    h, rem = divmod(ms, 3600000)
+    m, rem = divmod(rem, 60000)
+    s, milli = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{milli:03d}"
+
+
+def _doc_parse_srt(text):
+    """SRT -> [{start_ms, end_ms, text}]。"""
+    cues = []
+    for block in re.split(r"\n\s*\n", (text or "").strip()):
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+        if len(lines) < 2:
+            continue
+        m = re.match(
+            r"(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)",
+            lines[1],
+        )
+        if not m:
+            continue
+        start = _doc_srt_ms(*map(int, m.groups()[:4]))
+        end = _doc_srt_ms(*map(int, m.groups()[4:]))
+        text = " ".join(lines[2:]).strip()
+        if not text:
+            continue
+        cues.append({"start": start, "end": end, "text": text})
+    return cues
+
+
+def _doc_ass_ms(t):
+    """ASS 时间 0:00:01.00 -> 毫秒（两位小数为百分秒）。"""
+    try:
+        h, m, rest = t.split(":")
+        s, cs = rest.split(".")
+        return (int(h) * 60 + int(m)) * 60000 + int(s) * 1000 + int(cs) * 10
+    except Exception:
+        return 0
+
+
+def _doc_ass_fmt(ms):
+    ms = max(0, int(round(ms)))
+    h, rem = divmod(ms, 3600000)
+    m, rem = divmod(rem, 60000)
+    s, milli = divmod(rem, 1000)
+    return f"{h}:{m:02d}:{s:02d}.{milli // 10:02d}"
+
+
+def _doc_parse_ass(text):
+    """ASS -> [{start_ms, end_ms, text, prefix}]（prefix 为 Dialogue 前 9 字段，组装时复用）。"""
+    cues = []
+    in_events = False
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            in_events = s.lower() == "[events]"
+            continue
+        if not in_events or not s.startswith("Dialogue:"):
+            continue
+        # Dialogue: Marked=0,0:00:01.00,0:00:02.00,Default,,0,0,0,,正文
+        parts = s.split(",", 9)
+        if len(parts) < 10:
+            continue
+        body = parts[9].strip()
+        if not body:
+            continue
+        cues.append({
+            "start": _doc_ass_ms(parts[1].strip()),
+            "end": _doc_ass_ms(parts[2].strip()),
+            "text": body,
+            "prefix": ",".join(parts[:9]) + ",",
+        })
+    return cues
+
+
+def _doc_escape(s):
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+class _EpubBilingualizer(HTMLParser):
+    """把 EPUB 的 xhtml 流式重写为双语版本。
+
+    - dual：块内原文原样保留，块结束后追加 <p class="hy-mt-tr">译文</p>
+    - mono：块内文本替换为译文（结构/标签保留）
+    script/style 内容跳过，注释与自闭合标签原样透传。
+    """
+
+    def __init__(self, translate, mono):
+        super().__init__(convert_charrefs=True)
+        self.translate = translate
+        self.mono = mono
+        self.out = []
+        self._depth = 0      # 当前块级嵌套深度（0=不在块内）
+        self._buf = []
+        self._skip = 0       # script/style 嵌套深度
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self._skip += 1
+        if self._skip:
+            return
+        self.out.append(self.get_starttag_text() or f"<{tag}>")
+        if tag in _DOC_BLOCK_TAGS:
+            self._depth += 1
+            self._buf = []
+
+    def handle_startendtag(self, tag, attrs):
+        if not self._skip:
+            self.out.append(self.get_starttag_text() or f"<{tag}/>")
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style"):
+            self._skip = max(0, self._skip - 1)
+        if self._skip:
+            return
+        if tag in _DOC_BLOCK_TAGS and self._depth:
+            text = " ".join("".join(self._buf).split()).strip()
+            self._buf = []
+            self._depth -= 1
+            if text:
+                tr = (self.translate(text) or text).strip()
+                if self.mono:
+                    self.out.append(_doc_escape(tr or text))
+                elif tr and tr != text:
+                    self.out.append(f'<p class="hy-mt-tr">{_doc_escape(tr)}</p>')
+        self.out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if self._skip:
+            return
+        if self._depth:
+            if not self.mono:
+                self.out.append(_doc_escape(data))
+            self._buf.append(data)
+        else:
+            self.out.append(_doc_escape(data))
+
+    def handle_comment(self, data):
+        if not self._skip:
+            self.out.append(f"<!--{data}-->")
+
+
+def _doc_translate_paras(paras, lang_out, progress_cb=None):
+    """逐段翻译；同语言段落原样返回；单段失败保留原文不中断任务。"""
+    results = []
+    total = len(paras)
+    for i, p in enumerate(paras, 1):
+        p = (p or "").strip()
+        if not p:
+            results.append(p)
+            continue
+        if is_same_language(p, lang_out):
+            results.append(p)
+        else:
+            try:
+                results.append(_infer_translate(p, lang_out))
+            except Exception as e:
+                logger.warning(f"文档翻译单段失败，保留原文: {e}")
+                results.append(p)
+        if progress_cb and (i % 5 == 0 or i == total):
+            progress_cb(i, total)
+    return results
+
+
+def _run_doc_job(job_id, input_path, lang_out):
+    """文档翻译任务线程：解析 -> 逐段翻译 -> 组装产物。跑着的时候看门狗不许退出。"""
+    global _active_jobs
+    with _activity_lock:
+        _active_jobs += 1
+    try:
+        job = DOC_JOBS[job_id]
+        kind = job["kind"]
+        mode = job["mode"]
+        workdir = job["workdir"]
+        stem = os.path.splitext(os.path.basename(input_path))[0]
+        job["status"] = "processing"
+        job["progress"] = "解析文件中…"
+
+        def cb(done, total):
+            job["progress"] = f"翻译中 {done}/{total} 段…"
+
+        out_path = None
+
+        if kind == "txt":
+            with open(input_path, encoding="utf-8", errors="replace") as f:
+                raw = f.read()
+            paras = _doc_split_paragraphs(raw)
+            translated = _doc_translate_paras(paras, lang_out, cb)
+            lines = []
+            for orig, tr in zip(paras, translated):
+                if mode == "mono":
+                    lines.append(tr if tr.strip() else orig)
+                else:
+                    lines.append(orig)
+                    lines.append(tr)
+                lines.append("")
+            out_path = os.path.join(workdir, f"{stem}.{lang_out}.{mode}.txt")
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+
+        elif kind == "srt":
+            with open(input_path, encoding="utf-8", errors="replace") as f:
+                raw = f.read()
+            cues = _doc_parse_srt(raw)
+            if not cues:
+                raise ValueError("SRT 中未解析到任何字幕块")
+            translated = _doc_translate_paras([c["text"] for c in cues], lang_out, cb)
+            lines = []
+            for i, (c, tr) in enumerate(zip(cues, translated), 1):
+                lines.append(str(i))
+                lines.append(f"{_doc_srt_fmt(c['start'])} --> {_doc_srt_fmt(c['end'])}")
+                if mode == "mono":
+                    lines.append(tr if tr.strip() else c["text"])
+                else:
+                    lines.append(c["text"])
+                    if tr.strip():
+                        lines.append(tr)
+                lines.append("")
+            out_path = os.path.join(workdir, f"{stem}.{lang_out}.{mode}.srt")
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+
+        elif kind == "ass":
+            with open(input_path, encoding="utf-8", errors="replace") as f:
+                raw = f.read()
+            cues = _doc_parse_ass(raw)
+            if not cues:
+                raise ValueError("ASS 中未解析到任何 Dialogue 行")
+            translated = _doc_translate_paras([c["text"] for c in cues], lang_out, cb)
+            lines = []
+            for c, tr in zip(cues, translated):
+                body = tr if tr.strip() else c["text"]
+                if mode == "mono":
+                    lines.append(c["prefix"] + body)
+                else:
+                    lines.append(c["prefix"] + c["text"])
+                    lines.append(c["prefix"] + body)
+            out_path = os.path.join(workdir, f"{stem}.{lang_out}.{mode}.ass")
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+
+        elif kind == "epub":
+            out_path = _doc_epub_translate(input_path, job, lang_out, mode)
+
+        job["status"] = "completed"
+        job["progress"] = "完成"
+        job["result"] = out_path
+        logger.info(f"[{job_id}] 文档翻译输出: {out_path}")
+    except Exception as e:
+        logger.error(f"[{job_id}] 文档翻译异常: {e}")
+        job["status"] = "failed"
+        job["error"] = str(e)
+    finally:
+        with _activity_lock:
+            _active_jobs -= 1
+
+
+def _doc_epub_translate(src_path, job, lang_out, mode):
+    """解包 EPUB -> 逐 xhtml 双语重写 -> 重打包（mimetype 保持第一项且不压缩）。"""
+    import zipfile as _z
+
+    job["progress"] = "解析 EPUB…"
+    with _z.ZipFile(src_path) as z:
+        html_names = [
+            i.filename for i in z.infolist()
+            if i.filename.lower().endswith((".xhtml", ".html", ".htm"))
+        ]
+    if not html_names:
+        raise ValueError("EPUB 中未找到任何 xhtml/html 内容文件")
+
+    # 粗略预扫段落数（用于进度显示），script/style 内不计
+    paras_total = 0
+    for name in html_names:
+        with _z.ZipFile(src_path) as z:
+            data = z.read(name)
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = data.decode("utf-8", errors="replace")
+        paras_total += len(re.findall(r"<(?:p|li|blockquote|h[1-6])[\s>]", text, re.I))
+
+    done = [0]
+
+    def translate(text):
+        if is_same_language(text, lang_out):
+            return text
+        try:
+            tr = _infer_translate(text, lang_out)
+        except Exception as e:
+            logger.warning(f"EPUB 单段失败，保留原文: {e}")
+            return text
+        done[0] += 1
+        if done[0] % 5 == 0 or done[0] >= max(paras_total, 1):
+            job["progress"] = f"翻译中 {done[0]}/{max(paras_total, 1)} 段…"
+        return tr or text
+
+    translated_files = {}
+    for name in html_names:
+        with _z.ZipFile(src_path) as z:
+            data = z.read(name)
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = data.decode("utf-8", errors="replace")
+        parser = _EpubBilingualizer(translate, mode == "mono")
+        try:
+            parser.feed(text)
+            parser.close()
+        except Exception as e:
+            logger.warning(f"EPUB 文件重写失败，保持原文 {name}: {e}")
+            continue
+        translated_files[name] = "".join(parser.out).encode("utf-8")
+
+    stem = os.path.splitext(os.path.basename(src_path))[0]
+    out_path = os.path.join(job["workdir"], f"{stem}.{lang_out}.{mode}.epub")
+
+    # 重打包：mimetype 必须是第一项且不压缩（EPUB 规范）
+    with _z.ZipFile(src_path) as z:
+        mt = z.read("mimetype")
+    with _z.ZipFile(out_path, "w") as zout:
+        zout.writestr("mimetype", mt, compress_type=_z.ZIP_STORED)
+        with _z.ZipFile(src_path) as z:
+            for info in z.infolist():
+                if info.filename == "mimetype":
+                    continue
+                data = translated_files.get(info.filename, z.read(info.filename))
+                zout.writestr(info, data)
+    return out_path
+
+
+@app.route("/v1/doc/translate", methods=["POST"])
+def doc_translate():
+    """
+    上传 TXT / SRT / ASS / EPUB 并翻译（任务式，同 PDF 流程）。
+
+    form 字段：file（必填）、lang_out（可选，默认配置）、mode（mono|dual）
+    """
+    if llm is None:
+        return jsonify({"error": "Model not loaded"}), 503
+    if "file" not in request.files:
+        return jsonify({"error": "缺少 file 字段"}), 400
+    uploaded = request.files["file"]
+    if not uploaded.filename:
+        return jsonify({"error": "文件名为空"}), 400
+
+    ext = os.path.splitext(uploaded.filename)[1].lower().lstrip(".")
+    if ext not in ("txt", "srt", "ass", "epub"):
+        return jsonify({"error": f"暂不支持的文件类型 .{ext}（支持 txt / srt / ass / epub）"}), 400
+
+    lang_out = request.form.get("lang_out") or user_config.get("target_lang", "zh")
+    mode = request.form.get("mode", "dual")
+    if mode not in ("mono", "dual"):
+        mode = "dual"
+
+    job_id = str(uuid.uuid4())
+    workdir = os.path.join(DOC_JOBS_DIR, job_id)
+    os.makedirs(workdir, exist_ok=True)
+    input_path = os.path.join(workdir, uploaded.filename)
+    uploaded.save(input_path)
+
+    DOC_JOBS[job_id] = {
+        "status": "pending",
+        "progress": "排队中",
+        "filename": uploaded.filename,
+        "kind": ext,
+        "mode": mode,
+        "workdir": workdir,
+        "created_at": time.time(),
+    }
+
+    t = threading.Thread(
+        target=_run_doc_job,
+        args=(job_id, input_path, lang_out),
+        daemon=True,
+    )
+    t.start()
+
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/v1/doc/status/<job_id>", methods=["GET"])
+def doc_status(job_id):
+    job = DOC_JOBS.get(job_id)
+    if not job:
+        return jsonify({"error": "任务不存在"}), 404
+    return jsonify({
+        "status": job.get("status"),
+        "progress": job.get("progress"),
+        "filename": job.get("filename"),
+        "error": job.get("error"),
+    })
+
+
+@app.route("/v1/doc/download/<job_id>", methods=["GET"])
+def doc_download(job_id):
+    job = DOC_JOBS.get(job_id)
+    if not job or job.get("status") != "completed" or not job.get("result"):
+        return jsonify({"error": "任务未完成"}), 404
+    src = job["result"]
+    if not os.path.exists(src):
+        return jsonify({"error": "产物文件不存在"}), 404
+    return send_file(
+        src,
+        mimetype="application/octet-stream",
+        as_attachment=True,
+        download_name=os.path.basename(src),
+    )
+
+
+# --------------------------------------------------------------------------
 # Web 页面
 # --------------------------------------------------------------------------
 
@@ -1614,20 +2316,29 @@ PDF_PAGE = r"""<!DOCTYPE html>
 
   <div class="card" id="uploadCard">
     <h2>
-      <span>PDF 翻译（保留原版面）</span>
+      <span>文档翻译</span>
       <span class="file-chip" id="fileChip" style="display:none">
         <b id="fileName"></b>
         <button class="btn-ghost" id="rechoose">换一个文件</button>
       </span>
     </h2>
+    <div class="row" id="typeRow" style="margin-top:0;margin-bottom:14px">
+      <label class="inline-check"><input type="radio" name="doctype" value="pdf" checked> PDF</label>
+      <label class="inline-check"><input type="radio" name="doctype" value="epub"> EPUB</label>
+      <label class="inline-check"><input type="radio" name="doctype" value="txt"> TXT</label>
+      <label class="inline-check"><input type="radio" name="doctype" value="srt"> SRT</label>
+      <label class="inline-check"><input type="radio" name="doctype" value="ass"> ASS</label>
+    </div>
     <div class="drop" id="drop">
-      <strong>点击选择 PDF</strong>
-      <p>或把文件拖到这里 · 引擎 BabelDOC</p>
+      <strong id="dropTitle">点击选择 PDF</strong>
+      <p id="dropSub">或把文件拖到这里 · 引擎 BabelDOC，保留原版面</p>
     </div>
     <input type="file" id="file" accept=".pdf" style="display:none">
+    <div class="row" id="modeRow" style="margin-top:12px">
+      <label class="inline-check"><input type="checkbox" id="bilingual"> 对照阅读（原文 + 译文）</label>
+    </div>
     <div class="row" id="pagesRow">
       <input type="text" id="pages" placeholder="页码范围，留空翻译全部（如 1,3-5）">
-      <label class="inline-check"><input type="checkbox" id="bilingual"> 对照阅读</label>
       <button id="start" disabled>开始翻译</button>
     </div>
   </div>
@@ -1713,6 +2424,33 @@ const pvMeta = document.getElementById('pvMeta');
 const actionBar = document.getElementById('actionBar');
 const abInfo = document.getElementById('abInfo');
 const startBtn2 = document.getElementById('start2');
+const typeInputs = document.querySelectorAll('input[name="doctype"]');
+const dropTitle = document.getElementById('dropTitle');
+const dropSub = document.getElementById('dropSub');
+const pagesRow = document.getElementById('pagesRow');
+
+// 文件类型：PDF 走 BabelDOC 版面还原；EPUB/TXT/SRT/ASS 走轻量文档管线
+const DOC_TYPE_LABEL = {
+  pdf:  ['PDF', '.pdf', '或把文件拖到这里 · 引擎 BabelDOC，保留原版面'],
+  epub: ['EPUB', '.epub', '或把文件拖到这里 · 本地模型逐段翻译，双语保留原样式'],
+  txt:  ['TXT', '.txt', '或把文件拖到这里 · 按段落输出双语对照'],
+  srt:  ['SRT 字幕', '.srt', '或把文件拖到这里 · 输出双语字幕（时间轴不变）'],
+  ass:  ['ASS 字幕', '.ass', '或把文件拖到这里 · 输出双语字幕（时间轴不变）']
+};
+function currentDocType() {
+  const el = document.querySelector('input[name="doctype"]:checked');
+  return el ? el.value : 'pdf';
+}
+typeInputs.forEach(r => r.onchange = () => {
+  const t = DOC_TYPE_LABEL[currentDocType()];
+  const isPdf = currentDocType() === 'pdf';
+  fileInput.accept = t[1];
+  dropTitle.textContent = '点击选择 ' + t[0];
+  dropSub.textContent = t[2];
+  pagesRow.style.display = isPdf ? 'flex' : 'none';
+  if (!isPdf) bilingualCheck.checked = true;   // 文档翻译默认双语对照；PDF 保持原同步逻辑
+  updateStartLabel();
+});
 
 // 扩展 LocalBridge 会把 chrome.storage.sync.pdfBilingual 写到 localStorage，
 // 装上扩展的用户这里的开关会自动同步；没装扩展时永远是 false。
@@ -1730,7 +2468,15 @@ function esc(s) {
 }
 
 function updateStartLabel() {
-  let label = '开始翻译', info = '未选择任何文章';
+  let label = '开始翻译', info = '未选择任何文件';
+  if (currentDocType() !== 'pdf' && selected) {
+    label = '开始翻译';
+    info = selected.name + (bilingualCheck.checked ? ' · 双语对照' : ' · 仅译文');
+    startBtn.textContent = label;
+    startBtn2.textContent = label;
+    abInfo.textContent = info;
+    return;
+  }
   if (selected && tocData && checked.size > 0) {
     let n = 0;
     checked.forEach(i => { n += tocData.articles[i].pages; });
@@ -1864,6 +2610,14 @@ async function pick(f) {
   statusBox.classList.remove('show');
   selAllBtn.textContent = '全选';
 
+  // 非 PDF：无目录/页码概念，选完即进入可翻译状态（底部操作栏显示开始按钮）
+  if (currentDocType() !== 'pdf') {
+    tocBox.classList.remove('show');
+    actionBar.style.display = 'block';
+    updateStartLabel();
+    return;
+  }
+
   // 上传并解析目录（2-4 秒）。失败就退回手工页码，绝不阻塞用户。
   const fd = new FormData();
   fd.append('file', f);
@@ -1889,6 +2643,27 @@ async function pick(f) {
 
 async function startTranslate() {
   if (!selected) return;
+
+  // ---- 轻量文档（EPUB / TXT / SRT / ASS）----
+  if (currentDocType() !== 'pdf') {
+    const fd = new FormData();
+    fd.append('file', selected);
+    fd.append('mode', bilingualCheck.checked ? 'dual' : 'mono');
+    startBtn.disabled = startBtn2.disabled = true;
+    statusBox.classList.add('show');
+    statusText.textContent = '上传中...';
+    bar.style.width = '15%';
+    const res = await fetch('/v1/doc/translate', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.error) {
+      statusText.innerHTML = '<span class="err">失败：' + esc(data.error) + '</span>';
+      startBtn.disabled = startBtn2.disabled = false;
+      return;
+    }
+    pollJob('/v1/doc/status/' + data.job_id, '/v1/doc/download/' + data.job_id);
+    return;
+  }
+
   const fd = new FormData();
   const manual = pagesInput.value.trim();
 
@@ -1918,8 +2693,12 @@ async function startTranslate() {
   const res = await fetch('/v1/pdf/translate', { method: 'POST', body: fd });
   const { job_id } = await res.json();
 
+  pollJob('/v1/pdf/status/' + job_id, '/v1/pdf/download/' + job_id);
+}
+
+function pollJob(statusUrl, downloadUrl) {
   const timer = setInterval(async () => {
-    const s = await (await fetch('/v1/pdf/status/' + job_id)).json();
+    const s = await (await fetch(statusUrl)).json();
     statusText.textContent = s.progress || s.status;
     logEl.textContent = s.progress || '';
     if (s.status === 'processing') bar.style.width = '60%';
@@ -1927,13 +2706,13 @@ async function startTranslate() {
       clearInterval(timer);
       bar.style.width = '100%';
       statusText.innerHTML = '<span class="ok">翻译完成，开始下载</span>';
-      window.location.href = '/v1/pdf/download/' + job_id;
+      window.location.href = downloadUrl;
       startBtn.disabled = startBtn2.disabled = false;
       loadJobs();
     }
     if (s.status === 'failed') {
       clearInterval(timer);
-      statusText.innerHTML = '<span class="err">失败：' + (s.error || '未知错误') + '</span>';
+      statusText.innerHTML = '<span class="err">失败：' + esc(s.error || '未知错误') + '</span>';
       startBtn.disabled = startBtn2.disabled = false;
       loadJobs();
     }
@@ -2015,6 +2794,7 @@ def main():
     _pdf_jobs_load()  # 恢复历史任务记录
     _uploads_load()
     _uploads_sweep()  # 清掉 24 小时前的上传件
+    os.makedirs(DOC_JOBS_DIR, exist_ok=True)  # 轻量文档翻译工作目录
 
     if not load_gguf_model():
         logger.error("模型加载失败，服务终止")
@@ -2024,7 +2804,8 @@ def main():
     logger.info("  /v1/translate       网页 + 字幕翻译")
     logger.info("  /v1/pdf/toc         PDF 目录提取（勾选文章用）")
     logger.info("  /v1/pdf/translate   PDF 版面还原翻译")
-    logger.info(f"  /pdf                上传页面  ->  http://localhost:{PORT}/pdf")
+    logger.info("  /v1/doc/translate   TXT/SRT/ASS/EPUB 轻量文档翻译")
+    logger.info(f"  /pdf                文档翻译页  ->  http://localhost:{PORT}/pdf")
 
     if IDLE_EXIT_MIN > 0:
         logger.info(f"空闲 {IDLE_EXIT_MIN:.0f} 分钟自动退出（HYMT_IDLE_EXIT=0 可关闭）")
