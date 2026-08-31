@@ -74,6 +74,16 @@ class UniversalCore {
                 this.togglePageTranslate().then(sendResponse);
                 return true;
             }
+            // 启用翻译开关 / 模型启动成功 -> 当前页自动开始翻译（带转圈提示）
+            if (request.action === 'autoTranslatePage') {
+                if (request.enabled === false) {
+                    this.removePageTranslations();
+                    sendResponse({ ok: true, active: false });
+                    return false;
+                }
+                this.startPageTranslate(false).then(sendResponse);
+                return true;
+            }
             if (request.action === 'getPageTranslateState') {
                 sendResponse({ ok: true, active: this.pageTranslateOn });
                 return false;
@@ -93,28 +103,53 @@ class UniversalCore {
             this.removePageTranslations();
             return { ok: true, active: false };
         }
+        // 手动按钮 = 强制翻译（不受 enabled 总开关 / 黑名单影响）
+        return this.startPageTranslate(true);
+    }
+
+    /**
+     * 开始整页翻译：每个待翻段落先插入转圈 loading，译文返回后原位替换。
+     * @param {boolean} force  手动触发时 true（不走 enabled 总开关检查）；
+     *                         开关联动时 false（黑名单页 / 关闭状态不翻）
+     */
+    async startPageTranslate(force = false) {
+        if (!force && !this.config.enabled) {
+            console.log('HY-MT: 翻译未启用，跳过自动整页翻译');
+            return { ok: true, active: false, count: 0 };
+        }
 
         const nodes = this.collectPageTextNodes();
         let queued = 0;
 
         for (const node of nodes) {
-            // 已有译文的段落跳过
-            if (node.nextSibling && node.nextSibling.classList &&
-                node.nextSibling.classList.contains('hy-mt-page-item')) continue;
+            // 已有译文 / 已有转圈中的段落跳过
+            const next = node.nextSibling;
+            if (next && next.classList) {
+                if (next.classList.contains('hy-mt-page-item')) continue;
+                if (next.classList.contains('hy-mt-page-loading')) continue;
+            }
 
             const text = node.textContent.trim();
             if (text.length < 2) continue;
             if (this.isSameLanguage(text, this.config.targetLanguage)) continue;
 
+            // 在译文将出现的位置先放转圈提示，译文到了再替换
+            const loading = document.createElement('div');
+            loading.className = 'hy-mt-page-loading';
+            loading.innerHTML = '<span class="hy-mt-loading-spinner"></span><span>翻译中…</span>';
+            node.parentNode.insertBefore(loading, node.nextSibling);
             queued++;
-            // 手动触发不走 config.enabled 开关；直接发后台翻译
+
             chrome.runtime.sendMessage(
                 { action: 'translate', text, targetLanguage: this.config.targetLanguage, priority: 'normal' },
                 (resp) => {
+                    // 无论成败先撤掉转圈（节点可能已被页面刷新移除）
+                    if (loading.parentNode) loading.remove();
+                    // 翻译被停止（恢复原文）后到达的响应不再插入译文
+                    if (!this.pageTranslateOn) return;
                     const tr = resp && resp.success ? resp.translation : null;
                     if (!tr) return;
                     if (typeof PROMPT_ECHO_RE !== 'undefined' && PROMPT_ECHO_RE.test(tr)) return;
-                    // 节点可能已被页面刷新移除
                     if (!node.parentNode) return;
                     const div = document.createElement('div');
                     div.className = 'hy-mt-page-item';
@@ -125,7 +160,6 @@ class UniversalCore {
             );
         }
 
-        this.pageItems = [];
         this.pageTranslateOn = true;
         console.log('HY-MT: 整页翻译已提交 ' + queued + ' 段');
         return { ok: true, active: true, count: queued };
@@ -152,6 +186,8 @@ class UniversalCore {
     removePageTranslations() {
         // 同时清理 DOM 里游离的译文（SPA 局部刷新可能留下引用丢失的节点）
         document.querySelectorAll('.hy-mt-page-item').forEach(el => el.remove());
+        // 清掉转圈占位；进行中的翻译回调到达后由 pageTranslateOn 守卫阻止插入
+        document.querySelectorAll('.hy-mt-page-loading').forEach(el => el.remove());
         this.pageItems = [];
         this.pageTranslateOn = false;
         console.log('HY-MT: 已恢复原文');
@@ -304,6 +340,27 @@ class UniversalCore {
                 font-size: 1em;
                 line-height: 1.6;
                 pointer-events: auto;
+            }
+
+            /* 整页翻译：译文到达前的转圈占位（译文出来后原位替换） */
+            .hy-mt-page-loading {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                margin-top: 4px;
+                padding: 2px 0;
+                font-size: 0.85em;
+                line-height: 1.6;
+                color: var(--hy-mt-page-color, #2563eb);
+                opacity: 0.65;
+                pointer-events: none;
+            }
+            .hy-mt-page-loading .hy-mt-loading-spinner {
+                width: 12px;
+                height: 12px;
+                margin-left: 0;
+                vertical-align: middle;
+                border-top-color: var(--hy-mt-page-color, #2563eb);
             }
 
             /* Loading Spinner */

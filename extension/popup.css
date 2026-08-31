@@ -565,6 +565,24 @@ button, input, select { font-family: inherit; }
 /* ------------------------------------------------------------ 服务卡 */
 
 .svc { gap: 8px; }
+/* 主视图服务行：模型状态 + 启动/停止 */
+.svc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: var(--r-md);
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  cursor: default;
+}
+@media (prefers-color-scheme: dark) {
+  .svc-row { background: var(--surface-2); border-color: var(--line); }
+}
+/* 运行状态色：默认 teal=运行中，停止=灰，加载中=黄 */
+.svc-row.svc-off .svc-dot { background: var(--ink-muted); }
+.svc-row.svc-loading .svc-dot { background: var(--yellow); }
 .svc-top {
   display: flex;
   align-items: center;

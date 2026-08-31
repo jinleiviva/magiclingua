@@ -43,6 +43,27 @@
 
     <!-- ===================== 主视图（高频动作） ===================== -->
     <main class="body view" id="viewMain">
+        <!-- 全局总开关：启用翻译 -->
+        <div class="row">
+            <label class="pill">
+                <span>启用翻译</span>
+                <span class="switch sm">
+                    <input type="checkbox" id="enabledToggle">
+                    <span class="track"><span class="knob"></span></span>
+                </span>
+            </label>
+        </div>
+
+        <!-- 本地模型：运行状态 + 启动/停止（服务地址配置在设置视图） -->
+        <div class="row svc-row" id="serviceRow" title="">
+            <span class="svc-dot"></span>
+            <span class="svc-text">
+                <span id="serviceState">检查中…</span>
+                <span id="serviceHint">正在查询服务状态</span>
+            </span>
+            <button id="serviceToggleBtn" class="btn-ghost">启动</button>
+        </div>
+
         <!-- 当前站点：右侧开关关掉＝把该域名加入黑名单 -->
         <div class="site-row">
             <div class="site-left">
@@ -161,21 +182,12 @@
             <div class="sec-title">翻译行为</div>
             <div class="row">
                 <label class="pill">
-                    <span>启用翻译</span>
-                    <span class="switch sm">
-                        <input type="checkbox" id="enabledToggle">
-                        <span class="track"><span class="knob"></span></span>
-                    </span>
-                </label>
-                <label class="pill">
                     <span>段落悬停翻译</span>
                     <span class="switch sm">
                         <input type="checkbox" id="hoverToggle">
                         <span class="track"><span class="knob"></span></span>
                     </span>
                 </label>
-            </div>
-            <div class="row">
                 <label class="pill">
                     <span>双语字幕</span>
                     <span class="switch sm">
@@ -183,6 +195,8 @@
                         <span class="track"><span class="knob"></span></span>
                     </span>
                 </label>
+            </div>
+            <div class="row">
                 <label class="pill">
                     <span>PDF 对照</span>
                     <span class="switch sm">
@@ -190,8 +204,6 @@
                         <span class="track"><span class="knob"></span></span>
                     </span>
                 </label>
-            </div>
-            <div class="row">
                 <label class="chip">
                     <span class="chip-lab">悬停触发键</span>
                     <select id="hoverModifier">
@@ -253,17 +265,11 @@
                 placeholder="the Fed=美联储&#10;quantitative easing=量化宽松"></textarea>
         </section>
 
-        <!-- 本地服务 -->
-        <section class="card svc" id="serviceRow">
-            <div class="svc-top">
-                <span class="svc-dot"></span>
-                <span class="svc-text">
-                    <span id="serviceState">检查中…</span>
-                    <span id="serviceHint">正在查询服务状态</span>
-                </span>
-                <button id="serviceToggleBtn" class="btn-ghost">启动</button>
-            </div>
+        <!-- 服务地址（运行状态与启动/停止已移到主视图） -->
+        <section class="card svc">
+            <div class="sec-title">服务地址</div>
             <input type="text" id="serverUrl" class="addr" spellcheck="false">
+            <p class="gloss-hint">本地模型的状态与启停按钮在主页顶部。修改地址后自动重新检测。</p>
         </section>
     </main>
 

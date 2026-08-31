@@ -455,7 +455,10 @@ function attachEventListeners() {
     wirePageTranslateBtn();
 
     enabledToggle.addEventListener('change', () => {
-        saveConfig({ enabled: enabledToggle.checked });
+        const enabled = enabledToggle.checked;
+        saveConfig({ enabled });
+        // 开启→当前页自动开始翻译；关闭→移除当前页译文恢复原文（无需手动刷新）
+        notifyActiveTab({ action: 'autoTranslatePage', enabled });
     });
 
     siteToggle.addEventListener('change', () => {
@@ -661,6 +664,14 @@ function saveConfig(updates) {
     });
 }
 
+/** 向当前激活标签页发消息（内容脚本未注入时静默忽略） */
+function notifyActiveTab(message) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs[0] || tabs[0].id == null) return;
+        chrome.tabs.sendMessage(tabs[0].id, message).catch(() => {});
+    });
+}
+
 // ---------------------------------------------------------------------------
 // 本地服务：状态与启停
 // ---------------------------------------------------------------------------
@@ -680,6 +691,7 @@ async function refreshService() {
 
     if (result.error === 'NO_HOST') {
         setStatus('offline', '未连接');
+        serviceRow.classList.add('svc-off');
         const msg = result.message || '(无报错详情)';
         // Chrome 几种拒绝理由，对应完全不同的修法：
         //   forbidden/blocked/access -> 扩展 ID 不在白名单（重装或换文件夹导致 ID 变了）
@@ -699,6 +711,7 @@ async function refreshService() {
 
     if (result.error) {
         setStatus('offline', '连接失败');
+        serviceRow.classList.add('svc-off');
         serviceState.textContent = '状态未知';
         serviceHint.textContent = `${result.message || result.error}（扩展 ID: ${myId}）`;
         serviceToggleBtn.disabled = true;
@@ -709,9 +722,11 @@ async function refreshService() {
     const running = result.running;
     serviceToggleBtn.disabled = false;
     serviceRow.title = `扩展 ID: ${myId}`;
+    serviceRow.classList.remove('svc-off', 'svc-loading');
 
     if (result.state === 'loading') {
         setStatus('checking', '模型加载中');
+        serviceRow.classList.add('svc-loading');
         serviceState.textContent = '加载模型中';
         serviceHint.textContent = '首次请求会稍慢，约 10–20 秒';
         setToggleButton('stopping', '启动中…', false);
@@ -720,6 +735,7 @@ async function refreshService() {
 
     if (!running) {
         setStatus('offline', '服务已停止');
+        serviceRow.classList.add('svc-off');
         serviceState.textContent = '未运行';
         serviceHint.textContent = '不占内存，需要时点启动';
         setToggleButton('start', '启动', false);
@@ -764,6 +780,11 @@ async function controlService(action, verb) {
         serviceToggleBtn.disabled = false;
     } else {
         serviceToggleBtn.disabled = original.disabled;
+    }
+
+    // 模型启动成功 → 当前页自动开始翻译（译文位置会先出现转圈提示）
+    if (action === 'serviceStart' && result.ok && result.running) {
+        notifyActiveTab({ action: 'autoTranslatePage', enabled: true });
     }
 }
 
