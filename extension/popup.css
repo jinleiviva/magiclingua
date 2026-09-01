@@ -384,7 +384,7 @@ button, input, select { font-family: inherit; }
   flex: 1;
   min-width: 0;
   height: 34px;
-  padding: 0 8px 0 10px;
+  padding: 0 10px;
   border-radius: var(--r-md);
   background: var(--surface-2);
   border: 1px solid transparent;
@@ -418,7 +418,7 @@ button, input, select { font-family: inherit; }
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
-  padding-right: 14px;
+  padding-right: 18px;
   text-align: right;
   direction: rtl;
 }
@@ -524,7 +524,7 @@ button, input, select { font-family: inherit; }
   align-items: center;
   gap: 6px;
 }
-.gloss-actions .btn-ghost { padding: 2px 8px; font-size: 10.5px; }
+.gloss-actions .btn-ghost { padding: 5px 10px; font-size: 11px; }
 
 .gloss-hint {
   margin: 0;
@@ -660,6 +660,7 @@ button, input, select { font-family: inherit; }
   align-items: center;
   justify-content: center;
   gap: 6px;
+  padding: 0 9px;
   border-radius: 7px;
   background: var(--canvas);
   border: 1px solid var(--line);
