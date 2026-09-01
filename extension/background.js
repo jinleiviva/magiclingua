@@ -21,8 +21,10 @@ const DEFAULT_CONFIG = {
     displayMode: 'append',
     bilingualSubtitle: false,
     streamOutput: false,
+    // 注意：黑名单是 hostname.includes() 子串匹配，写 'google.com' 会连
+    // news.google.com 一起屏蔽。要挡的是搜索结果页，所以写成 www 前缀。
     blacklist: [
-        'google.com', 'bing.com', 'baidu.com',
+        'www.google.com', 'bing.com', 'baidu.com',
         'github.com', 'gitlab.com', 'stackoverflow.com',
         'localhost', '127.0.0.1'
     ],

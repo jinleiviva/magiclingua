@@ -40,16 +40,22 @@ class TextFeedAdapter {
     }
 
     watchDOM() {
-        // Watch for new posts loading (Infinite Scroll)
-        const observer = new MutationObserver((mutations) => {
-            mutations.forEach(mutation => {
-                mutation.addedNodes.forEach(node => {
-                    if (node.nodeType === 1) { // Element
-                        // Check if node itself matches or children match
-                        this.scanForTargets(node);
-                    }
-                });
-            });
+        // Watch for new posts loading (Infinite Scroll).
+        //
+        // 两点调整：
+        // 1) 合并成 200ms 一次重扫。长页面（Wikipedia 级别，命中几千个容器）
+        //    DOM 变动每秒几十次，每次都全树 querySelectorAll 会明显卡顿。
+        // 2) 重扫 document.body 而不是只扫 addedNodes —— 原写法用
+        //    node.querySelectorAll()，新增节点自身就是容器时（<article> 被
+        //    整块插入）会漏掉它自己。
+        let scheduled = false;
+        const observer = new MutationObserver(() => {
+            if (scheduled) return;
+            scheduled = true;
+            setTimeout(() => {
+                scheduled = false;
+                this.scanForTargets(document.body);
+            }, 200);
         });
 
         observer.observe(document.body, { childList: true, subtree: true });
@@ -87,14 +93,25 @@ class TextFeedAdapter {
      */
     isExcluded(node) {
         const exclude = this.config.excludeSelector;
-        if (!exclude) return false;
+        if (exclude) {
+            try {
+                if (node.matches(exclude)) return true;
+                if (node.closest(exclude)) return true;
+            } catch (e) {
+                // 选择器非法时保守放行，避免站点配置错误导致整站不翻
+                console.warn('HY-MT: excludeSelector 无效', exclude, e);
+            }
+        }
 
-        try {
-            if (node.matches(exclude)) return true;
-            if (node.closest(exclude)) return true;
-        } catch (e) {
-            // 选择器非法时保守放行，避免站点配置错误导致整站不翻
-            console.warn('HY-MT: excludeSelector 无效', exclude, e);
+        // 中信号：cookie 条 / 付费墙 / 订阅框 / 广告 / 弹窗，沿整条祖先链匹配
+        if (this.core && typeof this.core.midExcluded === 'function' && this.core.midExcluded(node)) {
+            return true;
+        }
+
+        // 弱信号：布局类 class 子串只就近匹配，避免整页容器的类名带
+        // sidebar / nav 时把整篇正文误杀（分层说明见 UniversalCore 顶部）
+        if (this.core && typeof this.core.nearExcluded === 'function' && this.core.nearExcluded(node)) {
+            return true;
         }
         return false;
     }
@@ -105,8 +122,18 @@ class TextFeedAdapter {
             return;
         }
 
-        const text = node.textContent.trim();
+        const text = (this.core && typeof this.core.extractText === 'function')
+            ? this.core.extractText(node)
+            : node.textContent.trim();
         if (text.length < 5) return; // Too short
+
+        // 独立链接（不在块级正文里）要够长才翻，否则导航词、图标链接会
+        // 被当成正文，页面被一堆无意义译文撑烂
+        if (node.tagName === 'A') {
+            const minAnchor = (typeof MIN_ANCHOR_LENGTH === 'number') ? MIN_ANCHOR_LENGTH : 15;
+            if (text.length < minAnchor) return;
+            if (node.parentElement && node.parentElement.closest('p, h1, h2, h3, h4, li, blockquote')) return;
+        }
 
         // 1. Show Loading Spinner
         const spinner = document.createElement('div');
@@ -137,11 +164,14 @@ class TextFeedAdapter {
         const retryBtn = document.createElement('div');
         retryBtn.className = 'hy-mt-retry-btn';
         retryBtn.title = 'Retry Translation';
-        retryBtn.innerHTML = `
-            <svg class="hy-mt-retry-icon" viewBox="0 0 24 24">
-                <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-            </svg>
-        `;
+        // 不用 innerHTML：严格 CSP / Trusted Types 页面会抛 TypeError
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'hy-mt-retry-icon');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z');
+        svg.appendChild(path);
+        retryBtn.appendChild(svg);
 
         retryBtn.onclick = (e) => {
             e.stopPropagation();

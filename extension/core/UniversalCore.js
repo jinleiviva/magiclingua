@@ -3,6 +3,73 @@
  * 负责通用逻辑：通信、缓存、UI渲染
  */
 
+// ---------------------------------------------------------------------------
+// 正文节点收集：排除策略分两层
+//
+// 强信号 = 语义标签（nav / aside / footer / header / form ...）
+//   站点自己划定的非正文区域，信号明确，可以沿整条祖先链匹配，误杀率极低。
+//
+// 弱信号 = 布局类 class 子串（sidebar / menu / nav / comment ...）
+//   只准就近匹配。整页主体容器的类名经常是 page__body--with-sidebar、
+//   site-content--with-nav 这种，一旦沿全链 closest 匹配，整篇正文会被一次
+//   误杀干净（pbs.org 就是这么全灭的）。所以限定在自身 + 近 3 层祖先。
+//
+// 中信号 = 功能性区块类名（cookie 条 / 付费墙 / 订阅框 / 广告 / 弹窗）
+//   这些词不会出现在整页主体容器上，可以安全地沿整条祖先链匹配。
+// ---------------------------------------------------------------------------
+
+// 强信号：沿整条祖先链匹配
+const EXCLUDE_SELECTOR_STRICT =
+    'nav, aside, footer, header, form, button, select, textarea, ' +
+    'script, style, code, pre, figcaption, ' +
+    '[role="navigation"], [role="complementary"], [aria-hidden="true"], ' +
+    // 站点自己标记的「不翻译」区域（Google 的 material icon 用 <i class="…notranslate">，
+    // 以及很多站点给图标/品牌字标加 translate="no"），尊重它，翻出来只是噪音
+    '[translate="no"], .notranslate, [class*="notranslate"]';
+
+// 中信号：功能性区块，沿整条祖先链匹配
+const MID_EXCLUDE_SELECTOR = [
+    '[class*="cookie"]', '[class*="paywall"]', '[class*="newsletter"]',
+    '[class*="subscribe"]', '[class*="advert"]', '[class*="promo"]',
+    '[class*="sponsored"]', '[class*="modal"]', '[class*="popup"]',
+    '[class*="overlay"]', '[class*="banner"]', '[class*="gdpr"]'
+].join(', ');
+
+// 弱信号：布局类 class 子串，只在近 NEAR_EXCLUDE_DEPTH 层内生效
+const NEAR_EXCLUDE_KEYWORDS = [
+    'menu', 'nav', 'sidebar', 'comment', 'related', 'recommend', 'social', 'share'
+];
+const NEAR_EXCLUDE_DEPTH = 3;
+
+// 收集范围：块级正文 + 独立成块的链接（Google News / Hacker News 这类标题流
+// 把标题放在 <a> 上，只收 p/h/li 会颗粒无收）。
+// 刻意不收 td/th：老式站点（Hacker News 等）用 table 做整页布局，
+// 收 td 会把序号、空单元格、导航行全当成正文，脏得没法看。
+const BODY_TEXT_SELECTOR =
+    'p, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, summary, a';
+
+// 链接若已落在块级正文里，交给外层元素整段翻译，避免同一句翻两遍
+const BLOCK_ANCESTOR_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, summary';
+
+// 独立链接的最小长度：低于此值基本是图标/导航词，翻出来只会污染布局
+const MIN_ANCHOR_LENGTH = 15;
+
+// 叶子文本兜底收集的最小长度（现代 SPA 用 div/span/time 兜正文，
+// 例：Google News 的「AP News / 2 hours ago / By X」）。低于此值基本是
+// 序号、标点、留白，没有翻译价值
+const MIN_LEAF_LENGTH = 2;
+
+// 叶子兜底收集：只取这些「可能兜正文」的内联/容器标签的纯文本叶子
+// （不含元素子节点）。不收 a（已在 BODY_TEXT_SELECTOR 处理）、不收
+// table 系（老式 table 布局站点会炸）
+const LEAF_TEXT_SELECTOR = 'div, span, time, label, b, strong, em, i, small, cite, figcaption, dd, dt';
+
+// 语义容器里收集到的节点少于此值时，退化为全页扫描
+const MIN_BODY_NODES = 3;
+
+// 单页提交上限：本地推理是串行的，超长页面先保证视口附近出译文
+const MAX_PAGE_NODES = 400;
+
 class UniversalCore {
     constructor() {
         this.config = {
@@ -118,46 +185,60 @@ class UniversalCore {
             return { ok: true, active: false, count: 0 };
         }
 
-        const nodes = this.collectPageTextNodes();
+        const nodes = this.sortByViewport(this.collectPageTextNodes());
         let queued = 0;
 
         for (const node of nodes) {
-            // 已有译文 / 已有转圈中的段落跳过
-            const next = node.nextSibling;
-            if (next && next.classList) {
-                if (next.classList.contains('hy-mt-page-item')) continue;
-                if (next.classList.contains('hy-mt-page-loading')) continue;
-            }
-
-            const text = node.textContent.trim();
-            if (text.length < 2) continue;
-            if (this.isSameLanguage(text, this.config.targetLanguage)) continue;
-
-            // 在译文将出现的位置先放转圈提示，译文到了再替换
-            const loading = document.createElement('div');
-            loading.className = 'hy-mt-page-loading';
-            loading.innerHTML = '<span class="hy-mt-loading-spinner"></span><span>翻译中…</span>';
-            node.parentNode.insertBefore(loading, node.nextSibling);
-            queued++;
-
-            chrome.runtime.sendMessage(
-                { action: 'translate', text, targetLanguage: this.config.targetLanguage, priority: 'normal' },
-                (resp) => {
-                    // 无论成败先撤掉转圈（节点可能已被页面刷新移除）
-                    if (loading.parentNode) loading.remove();
-                    // 翻译被停止（恢复原文）后到达的响应不再插入译文
-                    if (!this.pageTranslateOn) return;
-                    const tr = resp && resp.success ? resp.translation : null;
-                    if (!tr) return;
-                    if (typeof PROMPT_ECHO_RE !== 'undefined' && PROMPT_ECHO_RE.test(tr)) return;
-                    if (!node.parentNode) return;
-                    const div = document.createElement('div');
-                    div.className = 'hy-mt-page-item';
-                    div.textContent = tr;
-                    node.parentNode.insertBefore(div, node.nextSibling);
-                    this.pageItems.push(div);
+            try {
+                // 已有译文 / 已有转圈中的段落跳过
+                const next = node.nextSibling;
+                if (next && next.classList) {
+                    if (next.classList.contains('hy-mt-page-item')) continue;
+                    if (next.classList.contains('hy-mt-page-loading')) continue;
                 }
-            );
+
+                const text = this.extractText(node);
+                if (text.length < 2) continue;
+                // 纯数字/标点（序号、计数、留白）没有翻译价值，翻出来只是噪音
+                if (!/[a-zA-Z一-鿿]/.test(text)) continue;
+                if (this.isSameLanguage(text, this.config.targetLanguage)) continue;
+
+                // 在译文将出现的位置先放转圈提示，译文到了再替换
+                // 注意：用 DOM 方法而不是 innerHTML，因为 Google News 等站点启用了
+                // Trusted Types，innerHTML 赋值会抛 TypeError 并直接中断整页翻译。
+                const loading = document.createElement('div');
+                loading.className = 'hy-mt-page-loading';
+                const spinner = document.createElement('span');
+                spinner.className = 'hy-mt-loading-spinner';
+                const label = document.createElement('span');
+                label.textContent = '翻译中…';
+                loading.appendChild(spinner);
+                loading.appendChild(label);
+                node.parentNode.insertBefore(loading, node.nextSibling);
+                queued++;
+
+                chrome.runtime.sendMessage(
+                    { action: 'translate', text, targetLanguage: this.config.targetLanguage, priority: 'normal' },
+                    (resp) => {
+                        // 无论成败先撤掉转圈（节点可能已被页面刷新移除）
+                        if (loading.parentNode) loading.remove();
+                        // 翻译被停止（恢复原文）后到达的响应不再插入译文
+                        if (!this.pageTranslateOn) return;
+                        const tr = resp && resp.success ? resp.translation : null;
+                        if (!tr) return;
+                        if (typeof PROMPT_ECHO_RE !== 'undefined' && PROMPT_ECHO_RE.test(tr)) return;
+                        if (!node.parentNode) return;
+                        const div = document.createElement('div');
+                        div.className = 'hy-mt-page-item';
+                        div.textContent = tr;
+                        node.parentNode.insertBefore(div, node.nextSibling);
+                        this.pageItems.push(div);
+                    }
+                );
+            } catch (e) {
+                // 单段失败不中断整页翻译；Trusted Types 等极端环境也至少能翻后面的节点
+                console.warn('HY-MT: 单段翻译提交失败', e);
+            }
         }
 
         this.pageTranslateOn = true;
@@ -166,21 +247,142 @@ class UniversalCore {
     }
 
     collectPageTextNodes() {
-        // 正文优先取语义容器，没有就退化到 body
-        let roots = document.querySelectorAll('article, main, [role="main"]');
-        if (!roots.length) roots = [document.body];
+        // 正文优先取语义容器
+        const roots = document.querySelectorAll('article, main, [role="main"]');
+        let found = roots.length ? this.collectFromRoots(roots) : [];
 
+        // 语义容器里几乎没收到东西时（标题流站点把内容铺在 c-wiz / 纯 div 里，
+        // 压根没有 article/main 包裹），退化到全页扫描，避免「点了没反应」
+        if (found.length < MIN_BODY_NODES) {
+            const fallback = this.collectFromRoots([document.body]);
+            if (fallback.length > found.length) found = fallback;
+        }
+        return found;
+    }
+
+    collectFromRoots(roots) {
         const found = new Set();
-        roots.forEach(root => {
-            root.querySelectorAll('p, h1, h2, h3, h4, li, blockquote').forEach(n => {
+        Array.from(roots).forEach(root => {
+            // 第一遍：块级正文 + 合格链接（保留段落结构）
+            root.querySelectorAll(BODY_TEXT_SELECTOR).forEach(n => {
                 if (found.has(n)) return;
-                const rect = n.getBoundingClientRect();
-                if (rect.width <= 0 || rect.height <= 0) return;
-                if (n.closest('nav, aside, footer, header, script, style, code, pre, form, button, figcaption, [class*="menu"], [class*="nav"], [class*="sidebar"], [class*="comment"], [class*="promo"]')) return;
+                if (!this.isBodyNode(n)) return;
                 found.add(n);
             });
         });
+
+        // 第二遍：叶子文本兜底收集。
+        // 现代 SPA（Google News / 各类信息流）把来源名、相对时间、作者署名、
+        // 日期标签全裹在 <div>/<span>/<time> 里，光靠块级标签选择器会漏掉一大片。
+        // 只取「不含元素子节点」的纯文本叶子，并跳过已落在某个收集到的块级
+        // 祖先里的（避免同一句话翻两遍）。
+        Array.from(roots).forEach(root => {
+            root.querySelectorAll(LEAF_TEXT_SELECTOR).forEach(n => {
+                if (found.has(n)) return;
+                if (n.children.length > 0) return; // 只收叶子，避免和已收集的块重复
+                if (!this.isBodyNode(n)) return;
+
+                // 已落在某个收集到的块级祖先里 → 交给外层元素整段翻译
+                let p = n.parentElement, depth = 0;
+                while (p && depth < 6) {
+                    if (found.has(p)) return;
+                    p = p.parentElement;
+                    depth++;
+                }
+
+                const t = n.textContent.trim();
+                if (t.length < MIN_LEAF_LENGTH) return;
+                if (!/[a-zA-Z一-鿿]/.test(t)) return; // 纯数字/标点/符号没翻译价值
+                found.add(n);
+            });
+        });
+
         return Array.from(found);
+    }
+
+    /**
+     * 判断一个元素是否算「值得翻译的正文」。
+     * 排除按强/弱信号分层处理，弱信号只就近匹配（见文件顶部说明）。
+     */
+    isBodyNode(n) {
+        const rect = n.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+
+        // 强信号：语义标签，沿整条祖先链匹配
+        if (n.closest(EXCLUDE_SELECTOR_STRICT)) return false;
+
+        // 中信号：cookie 条 / 付费墙 / 订阅框 / 广告 / 弹窗，沿整条祖先链匹配
+        if (this.midExcluded(n)) return false;
+
+        // 弱信号：布局类 class 子串，只在近几层祖先内生效
+        if (this.nearExcluded(n)) return false;
+
+        // 独立链接（不在块级正文里）才单独收集，且要够长
+        if (n.tagName === 'A') {
+            if (n.parentElement && n.parentElement.closest(BLOCK_ANCESTOR_SELECTOR)) return false;
+            if (n.textContent.trim().length < MIN_ANCHOR_LENGTH) return false;
+        }
+        return true;
+    }
+
+    /**
+     * 中信号排除：cookie 条 / 付费墙 / 订阅框 / 广告 / 弹窗覆盖层。
+     * 这些类名不会出现在整页主体容器上，所以可以沿整条祖先链匹配。
+     */
+    midExcluded(node) {
+        try {
+            return !!node.closest(MID_EXCLUDE_SELECTOR);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * 弱信号排除：只检查自身 + 近 depth 层祖先的 class 名子串。
+     * 用 substring 而非 closest，是为了避免整页容器类名（--with-sidebar）
+     * 把整篇正文误杀。返回命中说明应当跳过。
+     */
+    nearExcluded(node, depth = NEAR_EXCLUDE_DEPTH) {
+        let el = node;
+        for (let i = 0; el && el.nodeType === 1 && i <= depth; i++) {
+            const cls = typeof el.className === 'string' ? el.className.toLowerCase() : '';
+            if (cls) {
+                for (const kw of NEAR_EXCLUDE_KEYWORDS) {
+                    if (cls.includes(kw)) return true;
+                }
+            }
+            el = el.parentElement;
+        }
+        return false;
+    }
+
+    /**
+     * 取待翻文本。图标字体（Material Symbols 等）把图标名当文本渲染，
+     * 直接取 textContent 会把 "chevron_right" 这类图标名混进译文，
+     * 所以取文本前先把图标节点摘掉。
+     */
+    extractText(node) {
+        const ICON = '[class*="icon" i], [class*="symbol" i]';
+        if (!node.querySelector || !node.querySelector(ICON)) {
+            return (node.textContent || '').trim();
+        }
+        const clone = node.cloneNode(true);
+        clone.querySelectorAll(ICON).forEach(el => el.remove());
+        return (clone.textContent || '').trim();
+    }
+
+    /**
+     * 按「距当前视口中心的距离」排序：本地推理是串行的，
+     * 让眼睛看着的地方先出译文，长页面体感差别很大。
+     */
+    sortByViewport(nodes) {
+        if (nodes.length <= 1) return nodes;
+        const center = window.scrollY + (window.innerHeight || 800) / 2;
+        return nodes
+            .map(n => ({ n, d: Math.abs(n.getBoundingClientRect().top + window.scrollY - center) }))
+            .sort((a, b) => a.d - b.d)
+            .map(x => x.n)
+            .slice(0, MAX_PAGE_NODES);
     }
 
     removePageTranslations() {

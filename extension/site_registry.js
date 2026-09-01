@@ -194,14 +194,16 @@ const HY_MT_SITES = {
     // ------------------------------------------------------------------
     // 社交 / 论坛
     // ------------------------------------------------------------------
+    // 2026-09-01 实测（系统 Chrome）：首页没有 <article>、也没有 [role=main]，
+    // 内容全铺在 <c-wiz> 里，标题挂在 <a class="gPFEn"> 上。
+    // 所以容器补 c-wiz，正文选择器保留 a.gPFEn + 通用 h/p/li 双保险。
     'news.google.com': {
         type: 'text_feed',
         optimizationLevel: 'verified',
         adapter: 'TextFeedAdapter',
-        // Google News 标题是 <a class="gPFEn">，不是 p/h 系列标签
-        containerSelector: 'article, c-wiz [role="main"], main',
-        textSelector: 'a.gPFEn, article h3, article h4, article p',
-        excludeSelector: '[class*="promo"], [class*="sponsored"]'
+        containerSelector: 'article, main, [role="main"], c-wiz',
+        textSelector: 'a.gPFEn, article h3, article h4, article p, h1, h2, h3, h4, p, li',
+        excludeSelector: 'nav, header, footer, aside, [class*="promo"], [class*="sponsored"]'
     },
     'reddit.com': {
         type: 'text_feed',
@@ -240,15 +242,18 @@ const GENERIC_ARTICLE = {
     type: 'text_feed',
     optimizationLevel: 'generic',
     adapter: 'TextFeedAdapter',
-    containerSelector: 'article, main, [role="main"], [class*="article-body"], [class*="articleBody"], [class*="post-content"], [class*="entry-content"]',
-    textSelector: 'p, h1, h2, h3',
+    // 兜底容器补上 id/class 里带 main / content 的：Hacker News 这类老式
+    // 站点既没有 <article> 也没有 <main>，正文就躺在一个 id 叫 hnmain 的
+    // <table> 里，没有兜底会整站颗粒无收。
+    containerSelector: 'article, main, [role="main"], [class*="article-body"], [class*="articleBody"], [class*="post-content"], [class*="entry-content"], [id*="main"], [class*="content"]',
+    textSelector: 'p, h1, h2, h3, h4, li, blockquote, a',
+    // 只留强信号（语义标签，可沿整条祖先链匹配）。
+    // class 名子串那部分交给 UniversalCore.nearExcluded 就近匹配——整页容器
+    // 常叫 page__body--with-sidebar / site-content--with-nav，沿全链 closest
+    // 会把整篇正文一次误杀干净（pbs.org 就是这么全灭的）。
     excludeSelector: [
         'nav', 'aside', 'footer', 'header',
         '[role="navigation"]', '[role="complementary"]',
-        '[class*="paywall"]', '[class*="newsletter"]', '[class*="subscribe"]',
-        '[class*="related"]', '[class*="recommend"]', '[class*="promo"]',
-        '[class*="social"]', '[class*="share"]', '[class*="comment"]',
-        '[class*="advert"]', '[class*="cookie"]', '[class*="sidebar"]',
         'figcaption', 'form'
     ].join(', ')
 };
