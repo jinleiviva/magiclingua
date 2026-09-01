@@ -174,7 +174,7 @@ download_model() {
         ok "模型已存在: $(ls models/*.gguf | head -1)"
         return 0
     fi
-    info "下载翻译模型（约 1.1GB，来自 hf-mirror.com，带进度条）..."
+    info "下载翻译模型（约 1.1GB，来自魔搭社区 modelscope.cn，带进度条）..."
     ./download_model.sh || die "模型下载失败，请重试 ./download_model.sh"
     ok "模型下载完成"
 }

@@ -121,22 +121,41 @@ MagicLingua 是一个浏览器翻译插件，帮你轻松看懂英文网页、�
 
 ## 怎么开始用
 
-一共三步：**装本地服务 → 装扩展 → 装一键启停通道**。前两步各做一次，第三步是可选优化。
+一共两步：**装本地翻译服务（一键）→ 装扩展**。
 
-> 需要：**Python 3.9+**（推荐 3.11+）、内存 4 GB+、磁盘约 3 GB。不需要 GPU。
+> 需要：**macOS（Apple Silicon）**、内存 4 GB+、磁盘约 3 GB。不需要 GPU。
+> Windows / Linux 见文末「给开发者」；Intel Mac 会自动回退源码编译（耗时较长）。
 
-### 第 1 步：装本地翻译服务（一次）
+### 第 1 步：装本地翻译服务（一次，约几分钟）
 
-打开终端（macOS 叫「终端」，Windows 用 Git Bash），输入：
+**macOS 用户推荐双击**（终端都省了）：
+
+```
+下载仓库 → 双击 install.command
+```
+
+或者打开终端（更稳妥，能看到进度）：
 
 ```bash
 git clone https://github.com/jinleiviva/magiclingua.git && cd magiclingua
-./setup_env.sh          # 准备运行环境，约几分钟
-./download_model.sh     # 下载翻译模型，约 1.1 GB
-./start_server_gguf.sh  # 启动服务
+./install.command
 ```
 
-看到 ✅ 说明服务跑起来了。**以后每次想用翻译，跑最后一行这条命令就行**（或者装了第 3 步，点插件就能启动）。
+脚本会**自动完成全部安装**：
+
+1. 创建 Python 虚拟环境
+2. 安装翻译引擎——Apple Silicon 自动用官方预编译 wheel（**免源码编译**，老的 7 分钟编译已不需要）
+3. 从**魔搭社区**下载翻译模型（约 1.1 GB，国内直连快，带进度条，断点续传）
+4. 注册开机自启（launchd）+ 浏览器原生宿主（装完扩展就能一键启停服务）
+
+看到 `MagicLingua 安装完成` 就是装好了。**装完先完全退出 Chrome（Cmd+Q）再重开**。
+
+> 手动分步装（不用一键脚本）：
+> ```bash
+> ./setup_env.sh          # 环境 + 引擎 + 依赖
+> ./download_model.sh     # 下载模型（约 1.1 GB）
+> ./start_server_gguf.sh  # 启动服务
+> ```
 
 ### 第 2 步：装浏览器扩展（一次）
 
@@ -146,23 +165,13 @@ git clone https://github.com/jinleiviva/magiclingua.git && cd magiclingua
 
 装好后，浏览器右上角会出现插件图标。点开确认能看到面板，就装好了。
 
-### 第 3 步（可选）：让插件能一键启停服务
-
-不装这步也能用，只是每次要自己开终端启动服务。装了之后，点插件图标里的「启动 / 停止」就能控制服务。
-
-**macOS** 直接跑：
-
-```bash
-./native_host/install.command
-```
-
-装完**必须完全退出浏览器再重开**（macOS 按 Cmd+Q，不是关窗口）。
+> 第 1 步已注册原生宿主，所以装完扩展**重启 Chrome** 后，点插件里的「启动 / 停止」就能控制服务，不用再碰终端。
 
 <details>
 <summary>更多说明（Windows / Linux、扩展 ID 变了怎么办）</summary>
 
 - **Windows / Linux 一键启停**：目前没有安装脚本，需要手动注册（详见 `native_host/com.magiclingua.host.json` 里的说明），不注册不影响翻译功能本身。
-- **扩展 ID 变了**：扩展 ID 由 `extension` 文件夹的位置决定，只要不移动 / 改名就不会变。万一变了，重跑一次第 3 步的安装命令即可自动适配。
+- **扩展 ID 变了**：扩展 ID 由 `extension` 文件夹的位置决定，只要不移动 / 改名就不会变。万一变了，重跑一次 `./native_host/install.command` 即可自动适配。
 - **服务端口被占用**：默认端口 18770。被占时用 `lsof -i :18770` 找到占用进程结束它，或设置环境变量 `HYMT_PORT` 换端口。
 
 </details>
@@ -229,13 +238,19 @@ git clone https://github.com/jinleiviva/magiclingua.git && cd magiclingua
 | `HYMT_PORT` | `18770` | 服务端口 |
 | `HYMT_IDLE_EXIT` | `20` | 空闲多少分钟自动退出，`0` = 常驻 |
 | `HYMT_MODEL_PATH` | 空 | 直接指定模型文件路径（优先于 `models/`） |
-| `HF_ENDPOINT` | `https://hf-mirror.com` | 下载源镜像（模型 / PDF 解析组件用） |
-| `MODEL_REPO` / `MODEL_FILE` | Hy-MT2-1.8B / Q4_K_M | `download_model.sh` 的下载目标 |
+| `MODEL_NAMESPACE` / `MODEL_REPO` / `MODEL_FILE` | Tencent-Hunyuan / Hy-MT2-1.8B-GGUF / Q4_K_M | `download_model.sh` 的下载目标（默认魔搭社区） |
+| `HF_ENDPOINT` | 空 | 设置后切换下载源到 HuggingFace / 镜像（如 `https://huggingface.co`） |
 
-换更大模型（效果更好、速度更慢）：
+换更大模型（效果更好、速度更慢）——默认走魔搭社区：
 
 ```bash
-MODEL_REPO=tencent/Hy-MT2-7B-GGUF MODEL_FILE=Hy-MT2-7B.Q4_K_M.gguf ./download_model.sh
+MODEL_NAMESPACE=Tencent-Hunyuan MODEL_REPO=Hy-MT2-7B-GGUF MODEL_FILE=Hy-MT2-7B-Q4_K_M.gguf ./download_model.sh
+```
+
+切回 HuggingFace 官方源：
+
+```bash
+HF_ENDPOINT=https://huggingface.co MODEL_NAMESPACE=tencent MODEL_REPO=Hy-MT2-7B-GGUF MODEL_FILE=Hy-MT2-7B-Q4_K_M.gguf ./download_model.sh
 ```
 
 Apple Silicon 加速：仓库自带的依赖安装已启用 Metal 加速；自行编译时设 `CMAKE_ARGS="-DGGML_METAL=ON"`。
@@ -247,24 +262,27 @@ Apple Silicon 加速：仓库自带的依赖安装已启用 Metal 加速；自�
 
 ```
 magiclingua/
-├── setup_env.sh           # 环境配置（venv + 依赖）
-├── download_model.sh      # 下载模型到 models/
-├── start_server_gguf.sh   # 手动启动本地翻译服务（开发 / 调试）
-├── server_gguf.py         # 服务主程序（OpenAI 兼容 API + PDF/文档翻译）⭐
-├── ocr_engine.py          # 扫描件 OCR（macOS Vision）
-├── pdf_toc.py             # PDF 目录解析
-├── requirements.txt       # 运行依赖（锁版本）
-├── config.example.json    # 配置样例（首次运行自动生成 config.json）
-├── test_api.py            # API 冒烟测试
-├── test_streaming.py      # 流式输出冒烟测试
-├── pack_extension.py      # 打包 CRX（发布用）
-├── ui-preview.html        # popup 样式预览页（开发用）
-├── icons_src/             # 图标源素材
-├── extension/             # Chrome 扩展（开发者模式加载）
-├── native_host/           # 扩展 ↔ 本机服务的 Native Messaging 通道
-├── LICENSE                # 本项目代码许可证（MIT）
-├── MODEL_LICENSE.txt      # 翻译模型许可证（Tencent HY Community License）
-└── NOTICE                 # 许可与商标披露汇总
+├── install.command         # macOS 双击一键安装（普通用户入口）⭐
+├── setup_env.sh            # 一键安装脚本（venv + 引擎 + 模型 + 自启注册）
+├── download_model.sh       # 下载模型到 models/（默认魔搭社区，断点续传）
+├── requirements-core.txt   # 翻译核心依赖（不含 PDF 解析组件）
+├── requirements-pdf.txt    # PDF 翻译依赖（--with-pdf 按需安装）
+├── start_server_gguf.sh    # 手动启动本地翻译服务（开发 / 调试）
+├── server_gguf.py          # 服务主程序（OpenAI 兼容 API + PDF/文档翻译）⭐
+├── ocr_engine.py           # 扫描件 OCR（macOS Vision）
+├── pdf_toc.py              # PDF 目录解析
+├── requirements.txt        # 完整运行依赖（含 PDF，锁版本）
+├── config.example.json     # 配置样例（首次运行自动生成 config.json）
+├── test_api.py             # API 冒烟测试
+├── test_streaming.py       # 流式输出冒烟测试
+├── pack_extension.py       # 打包 CRX（发布用）
+├── ui-preview.html         # popup 样式预览页（开发用）
+├── icons_src/              # 图标源素材
+├── extension/              # Chrome 扩展（开发者模式加载）
+├── native_host/            # 扩展 ↔ 本机服务的 Native Messaging 通道
+├── LICENSE                 # 本项目代码许可证（MIT）
+├── MODEL_LICENSE.txt       # 翻译模型许可证（Tencent HY Community License）
+└── NOTICE                  # 许可与商标披露汇总
 ```
 
 </details>

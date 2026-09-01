@@ -4,9 +4,9 @@ set -euo pipefail
 #
 # 特性：
 # - 已存在则跳过（幂等，重复执行不会重下）
-# - curl 直连 + 断点续传 + 字节数校验（x-linked-size）
-# - 默认走国内镜像 hf-mirror.com（该仓库自动回源官方，等价官方直连），
-#   可用 HF_ENDPOINT 覆盖（如 https://huggingface.co）
+# - curl 直连 + 断点续传 + 字节数校验（content-range / x-linked-size）
+# - 默认走魔搭社区 modelscope.cn（国内 CDN，实测约 10MB/s，比 hf-mirror 快 5 倍），
+#   腾讯官方命名空间 Tencent-Hunyuan；可用环境变量切换回 HuggingFace。
 #
 # 为什么不用 huggingface_hub CLI：
 #   huggingface_hub ≥1.x 对 hf-mirror 的 308 回源重定向有跨 host 安全检查，
@@ -18,10 +18,22 @@ set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
 
-REPO="${MODEL_REPO:-tencent/Hy-MT2-1.8B-GGUF}"
+# 默认走魔搭社区（国内直连 CDN）；设置 HF_ENDPOINT 则切回 HuggingFace / 镜像。
+# 例：HF_ENDPOINT=https://huggingface.co MODEL_NAMESPACE=tencent ./download_model.sh
+NAMESPACE="${MODEL_NAMESPACE:-Tencent-Hunyuan}"
+REPO="${MODEL_REPO:-Hy-MT2-1.8B-GGUF}"
 FILE="${MODEL_FILE:-Hy-MT2-1.8B-Q4_K_M.gguf}"
-ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
-URL="$ENDPOINT/$REPO/resolve/main/$FILE"
+if [ -n "${HF_ENDPOINT:-}" ]; then
+    # HuggingFace 格式：无 /models/ 前缀，分支为 main，大小在 x-linked-size 头
+    BASE="$HF_ENDPOINT/$NAMESPACE/$REPO"
+    URL="$BASE/resolve/main/$FILE"
+    SIZE_SRC="x-linked-size"
+else
+    # 魔搭格式：/models/ 前缀，分支为 master，大小在 content-range 头
+    BASE="https://modelscope.cn/models/$NAMESPACE/$REPO"
+    URL="$BASE/resolve/master/$FILE"
+    SIZE_SRC="content-range"
+fi
 DEST="models/$FILE"
 PART="$DEST.part"
 
@@ -36,8 +48,13 @@ if [ -f "$DEST" ] && [ -s "$DEST" ]; then
 fi
 
 # ------------------------------------------------------ 获取期望字节数 ------
-# x-linked-size 是 CDN 给出的精确大小；HEAD 跟随重定向即可读到
-EXPECTED="$(curl -sIL --max-time 20 "$URL" | grep -i "^x-linked-size:" | head -1 | sed 's/[^0-9]//g')"
+# 魔搭：GET + Range 0-0 返回 206 + content-range: bytes 0-0/1133080448 → 取斜杠后数字
+# HF：  HEAD 返回 x-linked-size: 1133080448 → 取数字
+if [ "$SIZE_SRC" = "content-range" ]; then
+    EXPECTED="$(curl -sL -D - -o /dev/null --max-time 20 -r 0-0 "$URL" | grep -i "^content-range:" | head -1 | sed 's/.*\///' | tr -dc '0-9')"
+else
+    EXPECTED="$(curl -sIL --max-time 20 "$URL" | grep -i "^x-linked-size:" | head -1 | sed 's/[^0-9]//g')"
+fi
 if [ -z "$EXPECTED" ]; then
     echo "⚠ 无法获取文件大小（网络受限？），跳过大小校验，仅依赖 curl 完整性。"
     EXPECTED=""
@@ -68,6 +85,7 @@ dl() {
 
 echo "下载 $REPO/$FILE ..."
 echo "（约 1.1GB，显示进度条；断网自动重试，可随时中断后重跑续传）"
+echo "来源: $URL"
 
 # 第一轮：允许续传
 if ! dl 1; then
@@ -84,4 +102,6 @@ fi
 mv "$PART" "$DEST"
 echo ""
 echo "✅ 完成：models/${FILE}（$(du -h "$DEST" | cut -f1)）"
-echo "提示：也可用环境变量自定义，例如 MODEL_REPO=tencent/Hy-MT2-7B-GGUF MODEL_FILE=Hy-MT2-7B.Q4_K_M.gguf ./download_model.sh"
+echo "提示：也可用环境变量自定义，例如"
+echo "  魔搭（默认）：MODEL_NAMESPACE=Tencent-Hunyuan MODEL_REPO=Hy-MT2-7B-GGUF MODEL_FILE=Hy-MT2-7B-Q4_K_M.gguf"
+echo "  切回 HF：    HF_ENDPOINT=https://huggingface.co MODEL_NAMESPACE=tencent MODEL_REPO=Hy-MT2-7B-GGUF MODEL_FILE=Hy-MT2-7B-Q4_K_M.gguf"
