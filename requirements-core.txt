@@ -1,0 +1,12 @@
+# MagicLingua 核心运行依赖（网页翻译 + 划词翻译 + 字幕翻译）
+# 注意：
+# - 不含 llama-cpp-python：macOS Apple Silicon 由 setup_env.sh 安装官方预编译
+#   wheel（免编译），其他平台由 setup_env.sh 走源码编译，因此不放在本文件。
+# - 不含 babeldoc / PyMuPDF / opencv（PDF 翻译按需，见 requirements-pdf.txt）。
+Flask==3.0.0
+numpy
+diskcache
+jinja2
+typing-extensions
+huggingface_hub
+requests

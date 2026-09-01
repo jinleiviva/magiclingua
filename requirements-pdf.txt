@@ -1,0 +1,6 @@
+# MagicLingua PDF 翻译依赖（按需安装，体量较大：babeldoc 全家桶约 470MB）
+# 安装： ./setup_env.sh --with-pdf
+babeldoc==0.6.4
+PyMuPDF==1.27.2.2
+opencv-python==4.11.0.86
+Pillow==12.1.0
