@@ -113,12 +113,40 @@ button, input, select { font-family: inherit; }
 .icon-btn.active { background: var(--surface-yellow); color: var(--yellow-dark); }
 @media (prefers-color-scheme: dark) { .icon-btn.active { background: var(--line); color: var(--yellow); } }
 
+/* 返回按钮：带文字的胶囊，进入设置后出现在顶栏最左侧（一眼可见） */
+.back-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px 0 9px;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: var(--canvas);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background .15s ease, transform .15s ease;
+}
+.back-btn:hover { background: var(--teal); }
+.back-btn:active { transform: scale(.96); }
+.back-btn svg { flex-shrink: 0; }
+
 .settings-title {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: .2px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
+
+/* 显式 [hidden]：覆盖 .brand / .hd 等可能覆盖 UA 隐藏默认值的 display 规则 */
+.brand[hidden] { display: none; }
 
 .hidden { display: none !important; }
 

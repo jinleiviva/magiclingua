@@ -61,6 +61,7 @@ const viewSettings = document.getElementById('viewSettings');
 const settingsBtn = document.getElementById('settingsBtn');
 const backBtn = document.getElementById('backBtn');
 const settingsTitle = document.getElementById('settingsTitle');
+const brand = document.getElementById('brand');
 
 // 悬停翻译 + 样式
 const hoverToggle = document.getElementById('hoverToggle');
@@ -118,6 +119,7 @@ function initViewSwitch() {
         viewSettings.hidden = false;
         backBtn.classList.remove('hidden');
         settingsTitle.classList.remove('hidden');
+        brand.hidden = true;
         settingsBtn.classList.add('active');
     });
     backBtn.addEventListener('click', () => {
@@ -125,6 +127,7 @@ function initViewSwitch() {
         viewMain.hidden = false;
         backBtn.classList.add('hidden');
         settingsTitle.classList.add('hidden');
+        brand.hidden = false;
         settingsBtn.classList.remove('active');
     });
 }
