@@ -151,6 +151,11 @@ function initPageTranslateBtn() {
     });
 }
 
+// 「启用翻译」未开启时，「翻译本页」置灰——没有总开关，单页翻译也不该生效
+function syncTranslateBtnState() {
+    pageTranslateBtn.disabled = !enabledToggle.checked;
+}
+
 function wirePageTranslateBtn() {
     pageTranslateBtn.addEventListener('click', async () => {
         pageTranslateBtn.disabled = true;
@@ -167,7 +172,7 @@ function wirePageTranslateBtn() {
         const ready = await ensureServiceRunning();
         pageTranslateBtn.classList.remove('loading');
         if (!ready) {
-            pageTranslateBtn.disabled = false;
+            syncTranslateBtnState();
             pageTranslateBtn.textContent = '本地服务未就绪';
             setTimeout(() => { pageTranslateBtn.textContent = '翻译本页'; }, 2500);
             return;
@@ -177,12 +182,12 @@ function wirePageTranslateBtn() {
         pageTranslateBtn.textContent = '处理中…';
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             if (!tabs[0]) {
-                pageTranslateBtn.disabled = false;
+                syncTranslateBtnState();
                 pageTranslateBtn.textContent = '翻译本页';
                 return;
             }
             chrome.tabs.sendMessage(tabs[0].id, { action: 'togglePageTranslate' }, (resp) => {
-                pageTranslateBtn.disabled = false;
+                syncTranslateBtnState();
                 if (chrome.runtime.lastError || !resp || !resp.ok) {
                     // 内容脚本未注入（chrome:// 页、PDF 页、刚打开未刷新等）
                     pageTranslateBtn.textContent = '此页面不支持，刷新后重试';
@@ -239,6 +244,7 @@ function loadConfig() {
         }
 
         enabledToggle.checked = config.enabled;
+        syncTranslateBtnState();
         targetLanguage.value = config.targetLanguage;
         // 配置里存着已不支持的语言（历史遗留）时回退到中文，避免 select 落到空值
         if (targetLanguage.selectedIndex === -1) targetLanguage.value = 'Chinese';
@@ -473,10 +479,13 @@ function attachEventListeners() {
                 // 拉起失败：回滚开关，避免用户误以为已生效（原因已由 ensureServiceRunning 写入状态区）
                 enabledToggle.checked = false;
                 saveConfig({ enabled: false });
+                syncTranslateBtnState();
                 setStatus('offline', '模型未就绪，自动翻译未开启');
                 return;
             }
         }
+        // 「启用翻译」未生效时「翻译本页」置灰；开启成功/正常关闭后按当前状态同步
+        syncTranslateBtnState();
         // 只控制「网页自动翻译」的启停，绝不触碰本地模型生命周期——
         // 模型可能正被其他调用占用（文档翻译 / 划词翻译 / 其他标签页），关闭开关不卸载模型
         notifyActiveTab({ action: 'autoTranslatePage', enabled });
@@ -696,6 +705,7 @@ function attachEventListeners() {
             // 反向（关启用翻译）不动模型：模型可能被文档/划词/其他标签页占用
             enabledToggle.checked = false;
             saveConfig({ enabled: false });
+            syncTranslateBtnState();
             notifyActiveTab({ action: 'autoTranslatePage', enabled: false });
         }
         controlService(wantRun ? 'serviceStart' : 'serviceStop');

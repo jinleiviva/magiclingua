@@ -321,6 +321,8 @@ button, input, select { font-family: inherit; }
 .cta:hover { opacity: .88; }
 .cta:active { transform: scale(.99); }
 .cta:disabled { background-color: var(--line); color: var(--ink-muted); cursor: not-allowed; }
+/* 「启用翻译」未开启时置灰：去掉内嵌图标，只剩灰字 */
+.cta:disabled { background-image: none; }
 /* 自动启动模型等待期：黑色药丸内白圈转圈 */
 .cta.loading { pointer-events: none; background-image: none; }
 .cta.loading::before {
