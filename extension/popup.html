@@ -49,34 +49,36 @@
 
     <!-- ===================== 主视图（高频动作） ===================== -->
     <main class="body view" id="viewMain">
-        <!-- 全局开关 + 本地模型：合并一行（左开关，右模型状态 + 启停） -->
-        <div class="row svc-row" id="serviceRow" title="">
-            <label class="pill sm" title="关闭后网页不再自动翻译">
-                <span>启用翻译</span>
+        <!-- 服务行：左「启用翻译」开关 / 右「本地模型」状态+启停（左右对称两半） -->
+        <div class="svc-row" id="serviceRow" title="">
+            <label class="svc-half" title="关闭后网页不再自动翻译">
+                <span class="svc-lab">启用翻译</span>
                 <span class="switch sm">
                     <input type="checkbox" id="enabledToggle">
                     <span class="track"><span class="knob"></span></span>
                 </span>
             </label>
             <span class="svc-divider" aria-hidden="true"></span>
-            <svg class="svc-icon" width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-                <rect x="3.5" y="3.5" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.7" />
-                <rect x="7" y="7" width="4" height="4" rx="0.8" stroke="currentColor" stroke-width="1.7" />
-                <path d="M6.5 1.5v2M11.5 1.5v2M6.5 14.5v2M11.5 14.5v2M1.5 6.5h2M1.5 11.5h2M14.5 6.5h2M14.5 11.5h2"
-                    stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-            </svg>
-            <span class="svc-text">
-                <span id="serviceState">检查中…</span>
-                <span id="serviceHint">正在查询服务状态</span>
-            </span>
-            <button id="serviceToggleBtn" class="btn-ghost">启动</button>
+            <div class="svc-half svc-model">
+                <svg class="svc-icon" width="15" height="15" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+                    <rect x="3.5" y="3.5" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.7" />
+                    <rect x="7" y="7" width="4" height="4" rx="0.8" stroke="currentColor" stroke-width="1.7" />
+                    <path d="M6.5 1.5v2M11.5 1.5v2M6.5 14.5v2M11.5 14.5v2M1.5 6.5h2M1.5 11.5h2M14.5 6.5h2M14.5 11.5h2"
+                        stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                </svg>
+                <span class="svc-text">
+                    <span id="serviceState">检查中…</span>
+                    <span id="serviceHint" hidden>正在查询服务状态</span>
+                </span>
+                <button id="serviceToggleBtn" class="btn-ghost">启动</button>
+            </div>
         </div>
 
-        <!-- 当前站点：右侧开关关掉＝把该域名加入黑名单 -->
-        <div class="site-row">
-            <div class="site-left">
-                <span class="fav">
-                    <svg width="12" height="12" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <!-- 当前页面卡：域名 + 本站开关 + 目标语言 + 翻译本页（一个完整行动闭环） -->
+        <div class="card site-card">
+            <div class="site-head">
+                <span class="fav" aria-hidden="true">
+                    <svg width="12" height="12" viewBox="0 0 18 18" fill="none">
                         <path d="M4 2h6.5l3.5 3.5V15H4z" stroke="#FFFFFF" stroke-width="1.7"
                             stroke-linecap="round" stroke-linejoin="round" />
                         <path d="M10.5 2v3.5H14" stroke="#FFFFFF" stroke-width="1.7"
@@ -84,16 +86,12 @@
                     </svg>
                 </span>
                 <span class="domain" id="currentSiteDomain">—</span>
+                <span class="site-lab">本站翻译</span>
+                <label class="switch sm" title="关闭后本站点不再翻译">
+                    <input type="checkbox" id="siteToggle" checked>
+                    <span class="track"><span class="knob"></span></span>
+                </label>
             </div>
-            <label class="switch" title="关闭后本站点不再翻译">
-                <input type="checkbox" id="siteToggle" checked>
-                <span class="track"><span class="knob"></span></span>
-            </label>
-        </div>
-
-        <!-- 主行动区：翻译本页 + 语言/显示设置（一张卡片，翻译前先选语言） -->
-        <div class="card action-card">
-            <button id="pageTranslateBtn" class="cta">翻译本页</button>
             <div class="row">
                 <label class="chip">
                     <span class="chip-lab">目标语言</span>
@@ -156,6 +154,7 @@
                     </select>
                 </label>
             </div>
+            <button id="pageTranslateBtn" class="cta">翻译本页</button>
         </div>
 
         <!-- 视频站：导出双语字幕（VideoAdapter 运行且拿到字幕轨时才显示） -->
@@ -234,7 +233,6 @@
                 </div>
                 <input type="range" id="fontSize" min="14" max="40" step="2" value="24">
             </div>
-            <div class="preset-lab">配色预设</div>
             <div class="preset-grid" id="stylePresets"></div>
             <div class="row">
                 <label class="chip color-chip">
@@ -250,15 +248,16 @@
 
         <!-- 术语表：内置词库勾选生效 + 用户自定义 + CSV 导入导出 -->
         <section class="card gloss" id="glossCard">
-            <div class="sec-title">术语表</div>
-            <div class="gloss-actions">
-                <button id="importCsvBtn" class="btn-ghost">导入 CSV</button>
-                <button id="exportCsvBtn" class="btn-ghost">导出 CSV</button>
-                <input type="file" id="importCsvFile" accept=".csv,text/csv" hidden>
+            <div class="gloss-head">
+                <div class="sec-title">术语表</div>
+                <div class="gloss-actions">
+                    <button id="importCsvBtn" class="btn-ghost">导入 CSV</button>
+                    <button id="exportCsvBtn" class="btn-ghost">导出 CSV</button>
+                    <input type="file" id="importCsvFile" accept=".csv,text/csv" hidden>
+                </div>
             </div>
-            <div class="gloss-sec-title">内置词库</div>
             <div id="builtinGlossList" class="gloss-list"></div>
-            <div class="gloss-sec-title">自定义</div>
+            <div class="gloss-divider" aria-hidden="true"></div>
             <div class="gloss-row" id="customGlossRow">
                 <span class="switch sm" id="customGlossSwitch">
                     <input type="checkbox" id="customGlossToggle">
@@ -275,7 +274,7 @@
         <section class="card svc">
             <div class="sec-title">服务地址</div>
             <input type="text" id="serverUrl" class="addr" spellcheck="false">
-            <p class="gloss-hint">本地模型的状态与启停按钮在主页顶部。修改地址后自动重新检测。</p>
+            <p class="gloss-hint">本地模型状态与启停按钮在主页顶部</p>
         </section>
     </main>
 

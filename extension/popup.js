@@ -147,9 +147,18 @@ function initPageTranslateBtn() {
 }
 
 function wirePageTranslateBtn() {
-    pageTranslateBtn.addEventListener('click', () => {
+    pageTranslateBtn.addEventListener('click', async () => {
         pageTranslateBtn.disabled = true;
         pageTranslateBtn.textContent = '处理中…';
+
+        // 服务未启动时自动启动，模型就绪后再发起翻译
+        const ready = await ensureServiceRunning();
+        if (!ready) {
+            pageTranslateBtn.disabled = false;
+            pageTranslateBtn.textContent = '本地服务未就绪';
+            setTimeout(() => { pageTranslateBtn.textContent = '翻译本页'; }, 2500);
+            return;
+        }
 
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             if (!tabs[0]) {
@@ -283,14 +292,15 @@ function renderBuiltinGlossaries(activeIds) {
     builtinGlossList.innerHTML = '';
 
     for (const g of globalThis.BUILTIN_GLOSSARIES || []) {
-        const row = document.createElement('label');
-        row.className = 'gloss-row';
+        // 每个词库一个可勾选 chip（一行排开，不再一行业库一行）
+        const chip = document.createElement('label');
+        chip.className = 'gloss-chip';
+        chip.title = g.name;
 
-        const sw = document.createElement('span');
-        sw.className = 'switch sm';
-        sw.innerHTML = '<input type="checkbox" data-gloss-id=""><span class="track"><span class="knob"></span></span>';
-        sw.querySelector('input').dataset.glossId = g.id;
-        sw.querySelector('input').checked = active.includes(g.id);
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.dataset.glossId = g.id;
+        input.checked = active.includes(g.id);
 
         const name = document.createElement('span');
         name.className = 'gloss-name';
@@ -300,9 +310,9 @@ function renderBuiltinGlossaries(activeIds) {
         count.className = 'gloss-count';
         count.textContent = `${g.entries.length} 条`;
 
-        row.append(sw, name, count);
+        chip.append(input, name, count);
 
-        builtinGlossList.append(row);
+        builtinGlossList.append(chip);
     }
 }
 
@@ -628,8 +638,10 @@ function attachEventListeners() {
     });
 
     // 文档翻译入口（服务端 /pdf 页已扩展为 PDF/EPUB/TXT/字幕 通用文档页）
-    openDocBtn.addEventListener('click', (e) => {
+    openDocBtn.addEventListener('click', async (e) => {
         e.preventDefault();
+        // 服务未启动时自动启动，避免打开文档页后连不上本地服务
+        await ensureServiceRunning();
         chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
             chrome.tabs.create({ url: `${config.serverUrl}/pdf` });
         });
@@ -679,6 +691,36 @@ function sendToBackground(action) {
             resolve(response || { ok: false, error: 'NO_REPLY' });
         });
     });
+}
+
+/**
+ * 确保本地服务已就绪：未运行则自动启动并轮询等待模型加载完成。
+ * 返回 true = 服务可用；false = 无宿主/启动失败/超时。
+ */
+async function ensureServiceRunning() {
+    const st = await sendToBackground('serviceStatus');
+    if (st.ok && st.running) return true;
+    if (st.error === 'NO_HOST') {
+        serviceHint.textContent = '请先运行 native_host/install.command';
+        return false;
+    }
+    if (st.error) return false;
+
+    const start = await sendToBackground('serviceStart');
+    if (!start.ok || start.error) {
+        serviceHint.textContent = start.message || '服务启动失败';
+        return false;
+    }
+
+    // 轮询等待模型就绪（首次加载约 10–20 秒）
+    for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const s = await sendToBackground('serviceStatus');
+        if (s.ok && s.running) return true;
+        if (s.state === 'loading') continue; // 仍在加载，继续等
+    }
+    serviceHint.textContent = '服务启动超时，请手动重试';
+    return false;
 }
 
 async function refreshService() {
@@ -734,7 +776,6 @@ async function refreshService() {
         setStatus('offline', '服务已停止');
         serviceRow.classList.add('svc-off');
         serviceState.textContent = '未运行';
-        serviceHint.textContent = '不占内存，需要时点启动';
         setToggleButton('start', '启动', false);
         return;
     }

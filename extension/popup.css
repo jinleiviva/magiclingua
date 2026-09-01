@@ -85,7 +85,7 @@ button, input, select { font-family: inherit; }
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 14px 16px;
+  padding: 12px 16px;
 }
 
 .hd-right {
@@ -208,21 +208,21 @@ button, input, select { font-family: inherit; }
 /* ---------------------------------------------------------------- 主体 */
 
 .body {
-  padding: 14px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
-/* 站点行：域名 + 站点开关（关＝加入黑名单，开＝恢复翻译） */
-.site-row {
+/* 当前页面卡：域名 + 本站开关 + 目标语言 + 翻译本页（一个完整行动闭环） */
+.site-card { gap: 6px; }
+.site-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  height: 32px;
+  gap: 8px;
+  height: 28px;
+  padding: 0 4px;
 }
-.site-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .fav {
   width: 20px;
   height: 20px;
@@ -236,10 +236,19 @@ button, input, select { font-family: inherit; }
 @media (prefers-color-scheme: dark) { .fav { background: var(--line); } }
 .fav svg { display: block; }
 .domain {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 「本站翻译」小标签：明确这个开关管的是当前网址 */
+.site-lab {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--ink-muted);
   white-space: nowrap;
 }
 
@@ -319,23 +328,23 @@ button, input, select { font-family: inherit; }
   background: var(--surface);
   border: 1px solid var(--line-soft);
   border-radius: var(--r-lg);
-  padding: 8px;
+  padding: 7px 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   box-shadow: 0 1px 2px rgba(16, 24, 40, .03);
 }
 @media (prefers-color-scheme: dark) {
   .card { background: var(--surface); border-color: var(--line); }
 }
 
-.row { display: flex; align-items: center; gap: 8px; }
+.row { display: flex; align-items: center; gap: 6px; }
 
 /* 开关型胶囊：左文案右开关，开启态用黄底强调 */
 .pill {
   flex: 1;
   min-width: 0;
-  height: 36px;
+  height: 34px;
   padding: 0 8px 0 10px;
   border-radius: var(--r-md);
   background: var(--surface-2);
@@ -374,7 +383,7 @@ button, input, select { font-family: inherit; }
 .chip {
   flex: 1;
   min-width: 0;
-  height: 36px;
+  height: 34px;
   padding: 0 8px 0 10px;
   border-radius: var(--r-md);
   background: var(--surface-2);
@@ -433,7 +442,7 @@ button, input, select { font-family: inherit; }
 .slider {
   flex: 1;
   min-width: 0;
-  height: 36px;
+  height: 34px;
   padding: 0 10px;
   border-radius: var(--r-md);
   background: var(--surface-2);
@@ -501,52 +510,101 @@ button, input, select { font-family: inherit; }
 
 .gloss { gap: 6px; }
 
-.gloss-actions {
+/* 术语表卡：标题行 + 导入导出按钮（合并到一行，省 30+px 高度） */
+.gloss-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   padding: 0 4px;
 }
 
+.gloss-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.gloss-actions .btn-ghost { padding: 2px 8px; font-size: 10.5px; }
+
 .gloss-hint {
   margin: 0;
-  padding: 0 4px 6px;
+  padding: 0 4px 4px;
   font-size: 10.5px;
   color: var(--ink-muted);
 }
 
-.gloss-sec-title {
-  padding: 2px 10px 4px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: .04em;
-  color: var(--ink-muted);
+/* 内置词库 chips 与自定义条目之间一条细分隔线（替代「内置词库/自定义」两行小标题） */
+.gloss-divider {
+  height: 1px;
+  background: var(--line-soft);
+  margin: 0 4px;
 }
 
+/* 内置词库：chips 网格（一行排开，替代原来一行业库一行的奢侈布局） */
 .gloss-list {
   padding: 0 4px 4px;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
 }
-
+.gloss-chip {
+  position: relative;
+  height: 28px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--ink);
+  cursor: pointer;
+  user-select: none;
+  transition: background .15s ease;
+}
+.gloss-chip:hover { background: var(--surface-3); }
+.gloss-chip input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+.gloss-chip:has(input:checked) {
+  background: var(--yellow-light);
+  border-color: var(--yellow-line);
+  font-weight: 600;
+}
+@media (prefers-color-scheme: dark) {
+  .gloss-chip { background: var(--surface-2); border-color: transparent; }
+  .gloss-chip:hover { background: var(--surface-3); }
+  .gloss-chip:has(input:checked) { background: var(--line); border-color: transparent; color: var(--yellow); }
+}
+/* 自定义条目行（保留原 gloss-row 基础结构） */
 .gloss-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 30px;
+  min-height: 28px;
   cursor: pointer;
   user-select: none;
 }
-
 .gloss-name {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
 .gloss-count {
-  font-size: 10.5px;
+  flex-shrink: 0;
+  font-size: 10px;
   color: var(--ink-muted);
 }
 
@@ -578,11 +636,11 @@ button, input, select { font-family: inherit; }
 /* ------------------------------------------------------------ 服务卡 */
 
 .svc { gap: 8px; }
-/* 主视图服务行：启用翻译开关 + 模型状态 + 启动/停止（合并一行） */
+/* 主视图服务行：左「启用翻译」开关 / 右「本地模型」状态+启停（左右对称两半） */
 .svc-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 0;
   height: 42px;
   padding: 0 8px;
   border-radius: var(--r-md);
@@ -593,30 +651,37 @@ button, input, select { font-family: inherit; }
 @media (prefers-color-scheme: dark) {
   .svc-row { background: var(--surface-2); border-color: transparent; }
 }
-/* 合并行的「启用翻译」开关：紧凑尺寸，不参与 flex 拉伸 */
-.svc-row .pill {
-  flex: 0 0 auto;
-  width: auto;
+/* 左右各半：等宽（flex:1），等高 32px，内容居中 */
+.svc-half {
+  flex: 1;
   min-width: 0;
   height: 32px;
-  padding: 0 6px 0 10px;
-  font-size: 11.5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
 }
-.svc-row .pill .switch.sm .track { width: 34px; height: 19px; }
 /* 开关与模型状态之间的细分隔线 */
 .svc-divider {
   width: 1px;
-  height: 16px;
+  height: 20px;
   background: var(--line);
   flex-shrink: 0;
 }
-/* 运行状态色：默认 teal=运行中，停止=灰，加载中=黄 */
-.svc-row.svc-off .svc-dot { background: var(--ink-muted); }
-.svc-row.svc-loading .svc-dot { background: var(--yellow); }
-/* 服务行图标（CPU/模型）：默认 teal=运行中；JS 通过 svc-row 附加类切换颜色 */
+.svc-lab {
+  font-size: 12px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+/* 左半「启用翻译」开启时加深文字，与右侧形成对仗 */
+.svc-half:has(#enabledToggle:checked) .svc-lab { font-weight: 600; }
+/* 右半：模型状态（不可点击） */
+.svc-model { cursor: default; }
 .svc-icon {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   flex-shrink: 0;
   color: var(--teal-dark);
 }
@@ -627,44 +692,24 @@ button, input, select { font-family: inherit; }
   .svc-row.svc-off .svc-icon      { color: var(--ink-muted); }
   .svc-row.svc-loading .svc-icon  { color: var(--yellow); }
 }
-.svc-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 34px;
-}
-.svc-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--teal);
-  flex-shrink: 0;
-}
 .svc-text {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  gap: 2px;
 }
 #serviceState {
   font-size: 12px;
   font-weight: 500;
-  line-height: 1.3;
+  line-height: 1;
   color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#serviceHint {
-  font-size: 10.5px;
-  line-height: 1.3;
-  color: var(--ink-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* 次要提示行不再展示（服务状态单行即可，避免左右不对仗） */
+#serviceHint { display: none !important; }
 
 .btn-ghost {
   flex-shrink: 0;
@@ -761,13 +806,13 @@ button, input, select { font-family: inherit; }
 .preset-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  gap: 6px;
   padding: 2px 4px;
 }
 
 .preset-swatch {
   position: relative;
-  height: 34px;
+  height: 28px;
   border-radius: var(--r-sm);
   border: 1px solid var(--line);
   cursor: pointer;
