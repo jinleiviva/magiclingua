@@ -874,6 +874,8 @@ button, input, select { font-family: inherit; }
 }
 
 /* 颜色选择胶囊：color input 覆盖在胶囊右侧 */
+/* 颜色选择不是下拉框，隐藏 .chip 公用的下拉箭头，避免被色块遮挡露半截 */
+.color-chip::after { display: none; }
 .color-chip input[type=color] {
   flex: 1;
   min-width: 0;

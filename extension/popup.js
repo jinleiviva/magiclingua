@@ -458,9 +458,20 @@ function flashSubtitleBtn(label) {
 function attachEventListeners() {
     wirePageTranslateBtn();
 
-    enabledToggle.addEventListener('change', () => {
+    enabledToggle.addEventListener('change', async () => {
         const enabled = enabledToggle.checked;
         saveConfig({ enabled });
+        if (enabled) {
+            // 开启自动翻译前先确保本地模型已就绪；未启动则自动拉起并等待加载完成
+            const ready = await ensureServiceRunning();
+            if (!ready) {
+                // 拉起失败：回滚开关，避免用户误以为已生效（原因已由 ensureServiceRunning 写入状态区）
+                enabledToggle.checked = false;
+                saveConfig({ enabled: false });
+                setStatus('offline', '模型未就绪，自动翻译未开启');
+                return;
+            }
+        }
         // 只控制「网页自动翻译」的启停，绝不触碰本地模型生命周期——
         // 模型可能正被其他调用占用（文档翻译 / 划词翻译 / 其他标签页），关闭开关不卸载模型
         notifyActiveTab({ action: 'autoTranslatePage', enabled });
@@ -726,9 +737,13 @@ async function ensureServiceRunning() {
     if (st.ok && st.running) return true;
     if (st.error === 'NO_HOST') {
         serviceHint.textContent = '请先运行 native_host/install.command';
+        serviceState.textContent = '未安装本地服务';
         return false;
     }
-    if (st.error) return false;
+    if (st.error) {
+        serviceState.textContent = '状态异常';
+        return false;
+    }
 
     // 自动启动：进入「正在启动模型」反馈态（CPU 图标旋转 + 开关置灰）
     serviceRow.classList.add('svc-loading');
@@ -741,6 +756,7 @@ async function ensureServiceRunning() {
         serviceRow.classList.remove('svc-loading');
         serviceToggleChk.disabled = false;
         serviceHint.textContent = start.message || '服务启动失败';
+        serviceState.textContent = '启动失败';
         return false;
     }
 
@@ -761,6 +777,7 @@ async function ensureServiceRunning() {
     serviceRow.classList.remove('svc-loading');
     serviceToggleChk.disabled = false;
     serviceHint.textContent = '服务启动超时，请手动重试';
+    serviceState.textContent = '启动超时';
     return false;
 }
 
