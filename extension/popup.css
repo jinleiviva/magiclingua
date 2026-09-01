@@ -636,13 +636,13 @@ button, input, select { font-family: inherit; }
 /* ------------------------------------------------------------ 服务卡 */
 
 .svc { gap: 8px; }
-/* 主视图服务行：左「启用翻译」开关 / 右「本地模型」状态+启停（左右对称两半） */
+/* 主视图服务行：容器内嵌两枚独立卡片——左「启用翻译」开关 / 右「本地模型」状态+启停 */
 .svc-row {
   display: flex;
   align-items: center;
-  gap: 0;
-  height: 42px;
-  padding: 0 8px;
+  gap: 8px;
+  height: 44px;
+  padding: 6px 8px;
   border-radius: var(--r-md);
   background: var(--surface-2);
   border: 1px solid transparent;
@@ -651,25 +651,27 @@ button, input, select { font-family: inherit; }
 @media (prefers-color-scheme: dark) {
   .svc-row { background: var(--surface-2); border-color: transparent; }
 }
-/* 左右各半：等宽（flex:1），等高 32px，内容居中 */
+/* 左右各半：等宽（flex:1），各自一张内嵌小卡，用空隙明显区隔 */
 .svc-half {
   flex: 1;
   min-width: 0;
-  height: 32px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
+  border-radius: 7px;
+  background: var(--canvas);
+  border: 1px solid var(--line);
   cursor: pointer;
   user-select: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
-/* 开关与模型状态之间的细分隔线 */
-.svc-divider {
-  width: 1px;
-  height: 20px;
-  background: var(--line);
-  flex-shrink: 0;
-}
+/* 左半可点击：悬停高亮 teal 描边，提示可切换 */
+.svc-half:hover { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal); }
+/* 右半：纯状态展示，悬停不响应 */
+.svc-model { cursor: default; }
+.svc-model:hover { border-color: var(--line); box-shadow: none; }
 .svc-lab {
   font-size: 12px;
   color: var(--ink);
