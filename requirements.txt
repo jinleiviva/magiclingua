@@ -2,13 +2,14 @@
 # 安装： source venv/bin/activate && pip install -r requirements.txt
 #
 # 注意：
-# - llama-cpp-python 默认从源码编译，需要 cmake 与 C 编译器。
-# - Apple Silicon 想开启 Metal 加速（推荐），先设置环境变量再装：
-#     CMAKE_ARGS="-DGGML_METAL=ON" pip install llama-cpp-python==0.3.16
+# - llama-cpp-python 0.3.35 已提供 macOS arm64 预编译 wheel（GitHub release），
+#   无需再源码编译。但官方 wheel 的 zip CRC 字段全错（打包 bug），直接 pip install
+#   会报 BadZipFile；安装脚本里需先 `ditto -x -k` 解压再重打包（见 setup_env.sh）。
+# - Apple Silicon 的 Metal 加速默认已包含在预编译 wheel 中，无需 CMAKE_ARGS。
 # - 这里刻意不含 vllm / torch / transformers：服务端走 llama.cpp (GGUF)，
 #   那几个包体量巨大且运行时用不到。
 Flask==3.0.0
-llama-cpp-python==0.3.16
+llama-cpp-python==0.3.35
 PyMuPDF==1.27.2.2
 opencv-python==4.11.0.86
 numpy==2.3.5
