@@ -96,6 +96,11 @@ const GLOSSARY_MAX_ENTRIES = 80; // 与服务端 build_translate_prompt 的上�
 
 let initialHostname = null;
 let refreshTimer = null;
+// 服务状态 UI 的权威代际号：ensureServiceRunning/controlService 完成权威更新时自增，
+// 飞行中的 refreshService 响应据此判断自己是否过期（防「启动完成」被陈旧「未运行」覆盖）
+let serviceUiSeq = 0;
+// 服务启停流程进行中：期间 refreshService 不得用「未运行」覆盖启动反馈
+let serviceStarting = false;
 
 document.addEventListener('DOMContentLoaded', () => {
     loadConfig();
@@ -686,6 +691,13 @@ function attachEventListeners() {
         serviceRow.classList.add('svc-loading');
         serviceState.textContent = wantRun ? '正在启动模型…' : '正在停止…';
         setStatus('checking', wantRun ? '模型启动中' : '正在停止');
+        if (!wantRun) {
+            // 模型停止后网页自动翻译失去后端，同步关闭「启用翻译」；
+            // 反向（关启用翻译）不动模型：模型可能被文档/划词/其他标签页占用
+            enabledToggle.checked = false;
+            saveConfig({ enabled: false });
+            notifyActiveTab({ action: 'autoTranslatePage', enabled: false });
+        }
         controlService(wantRun ? 'serviceStart' : 'serviceStop');
     });
 }
@@ -736,16 +748,19 @@ async function ensureServiceRunning() {
     const st = await sendToBackground('serviceStatus');
     if (st.ok && st.running) return true;
     if (st.error === 'NO_HOST') {
+        serviceUiSeq++;
         serviceHint.textContent = '请先运行 native_host/install.command';
         serviceState.textContent = '未安装本地服务';
         return false;
     }
     if (st.error) {
+        serviceUiSeq++;
         serviceState.textContent = '状态异常';
         return false;
     }
 
     // 自动启动：进入「正在启动模型」反馈态（CPU 图标旋转 + 开关置灰）
+    serviceStarting = true;
     serviceRow.classList.add('svc-loading');
     serviceState.textContent = '正在启动模型…';
     serviceToggleChk.disabled = true;
@@ -753,6 +768,8 @@ async function ensureServiceRunning() {
 
     const start = await sendToBackground('serviceStart');
     if (!start.ok || start.error) {
+        serviceStarting = false;
+        serviceUiSeq++;
         serviceRow.classList.remove('svc-loading');
         serviceToggleChk.disabled = false;
         serviceHint.textContent = start.message || '服务启动失败';
@@ -765,7 +782,9 @@ async function ensureServiceRunning() {
         await new Promise((r) => setTimeout(r, 1500));
         const s = await sendToBackground('serviceStatus');
         if (s.ok && s.running) {
-            // 即时同步 UI（不必等 4s 定时刷新）
+            // 即时同步 UI（不必等 4s 定时刷新）；代际号 +1 使飞行中的旧 refreshService 响应作废
+            serviceStarting = false;
+            serviceUiSeq++;
             serviceRow.classList.remove('svc-loading');
             serviceState.textContent = '运行中';
             setServiceSwitch(true, false);
@@ -774,6 +793,8 @@ async function ensureServiceRunning() {
         }
         if (s.state === 'loading') continue; // 仍在加载，继续等
     }
+    serviceStarting = false;
+    serviceUiSeq++;
     serviceRow.classList.remove('svc-loading');
     serviceToggleChk.disabled = false;
     serviceHint.textContent = '服务启动超时，请手动重试';
@@ -782,7 +803,12 @@ async function ensureServiceRunning() {
 }
 
 async function refreshService() {
+    const mySeq = serviceUiSeq;
     const result = await sendToBackground('serviceStatus');
+    // 期间已有权威更新（模型启动完成/启停变更），本次查询结果已过期，丢弃防覆盖
+    if (mySeq !== serviceUiSeq) return;
+    // 启停流程进行中，避免用陈旧「未运行/加载中」覆盖启动反馈
+    if (serviceStarting && !result.running) return;
 
     const myId = chrome.runtime.id || '未知';
 
@@ -857,6 +883,7 @@ function setServiceSwitch(checked, disabled) {
 }
 
 async function controlService(action) {
+    serviceStarting = true;
     serviceToggleChk.disabled = true;
 
     const result = await sendToBackground(action);
@@ -867,6 +894,9 @@ async function controlService(action) {
         serviceHint.textContent = result.message || result.error;
     }
 
+    // 权威状态已变更：代际号 +1，作废飞行中的旧 refreshService 响应，再拉取最新状态
+    serviceStarting = false;
+    serviceUiSeq++;
     await refreshService();
     // refreshService 会按真实状态重设开关；这里只在失败兜底解除禁用，防连点
     if (!result.running && !result.ok) {
