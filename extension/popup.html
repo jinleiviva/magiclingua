@@ -58,19 +58,23 @@
                     <span class="track"><span class="knob"></span></span>
                 </span>
             </label>
-            <div class="svc-half svc-model">
+            <label class="svc-half svc-model" title="本地模型开关：打开自动启动，关闭停止">
                 <svg class="svc-icon" width="15" height="15" viewBox="0 0 18 18" fill="none" aria-hidden="true">
                     <rect x="3.5" y="3.5" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.7" />
                     <rect x="7" y="7" width="4" height="4" rx="0.8" stroke="currentColor" stroke-width="1.7" />
                     <path d="M6.5 1.5v2M11.5 1.5v2M6.5 14.5v2M11.5 14.5v2M1.5 6.5h2M1.5 11.5h2M14.5 6.5h2M14.5 11.5h2"
                         stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
                 </svg>
+                <span class="svc-lab">本地模型</span>
                 <span class="svc-text">
                     <span id="serviceState">检查中…</span>
                     <span id="serviceHint" hidden>正在查询服务状态</span>
                 </span>
-                <button id="serviceToggleBtn" class="btn-ghost">启动</button>
-            </div>
+                <span class="switch sm">
+                    <input type="checkbox" id="serviceToggleChk">
+                    <span class="track"><span class="knob"></span></span>
+                </span>
+            </label>
         </div>
 
         <!-- 当前页面卡：域名 + 本站开关 + 目标语言 + 翻译本页（一个完整行动闭环） -->

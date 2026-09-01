@@ -76,7 +76,7 @@ const exportSubtitleBtn = document.getElementById('exportSubtitleBtn');
 // 服务
 const serviceState = document.getElementById('serviceState');
 const serviceHint = document.getElementById('serviceHint');
-const serviceToggleBtn = document.getElementById('serviceToggleBtn');
+const serviceToggleChk = document.getElementById('serviceToggleChk');
 const serviceRow = document.getElementById('serviceRow');
 const pageTranslateBtn = document.getElementById('pageTranslateBtn');
 
@@ -149,10 +149,18 @@ function initPageTranslateBtn() {
 function wirePageTranslateBtn() {
     pageTranslateBtn.addEventListener('click', async () => {
         pageTranslateBtn.disabled = true;
-        pageTranslateBtn.textContent = '处理中…';
 
-        // 服务未启动时自动启动，模型就绪后再发起翻译
+        // 服务未启动时自动启动：先给用户「正在启动模型 + 转圈」反馈
+        const quick = await sendToBackground('serviceStatus');
+        if (quick.ok && quick.running) {
+            pageTranslateBtn.textContent = '处理中…';
+        } else {
+            pageTranslateBtn.classList.add('loading');
+            pageTranslateBtn.textContent = '正在启动模型…';
+        }
+
         const ready = await ensureServiceRunning();
+        pageTranslateBtn.classList.remove('loading');
         if (!ready) {
             pageTranslateBtn.disabled = false;
             pageTranslateBtn.textContent = '本地服务未就绪';
@@ -160,6 +168,8 @@ function wirePageTranslateBtn() {
             return;
         }
 
+        // 模型就绪：恢复常规「处理中」态并发起翻译
+        pageTranslateBtn.textContent = '处理中…';
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
             if (!tabs[0]) {
                 pageTranslateBtn.disabled = false;
@@ -451,7 +461,8 @@ function attachEventListeners() {
     enabledToggle.addEventListener('change', () => {
         const enabled = enabledToggle.checked;
         saveConfig({ enabled });
-        // 开启→当前页自动开始翻译；关闭→移除当前页译文恢复原文（无需手动刷新）
+        // 只控制「网页自动翻译」的启停，绝不触碰本地模型生命周期——
+        // 模型可能正被其他调用占用（文档翻译 / 划词翻译 / 其他标签页），关闭开关不卸载模型
         notifyActiveTab({ action: 'autoTranslatePage', enabled });
     });
 
@@ -640,18 +651,31 @@ function attachEventListeners() {
     // 文档翻译入口（服务端 /pdf 页已扩展为 PDF/EPUB/TXT/字幕 通用文档页）
     openDocBtn.addEventListener('click', async (e) => {
         e.preventDefault();
-        // 服务未启动时自动启动，避免打开文档页后连不上本地服务
-        await ensureServiceRunning();
+        const lab = openDocBtn.querySelector('span');
+        const original = lab ? lab.textContent : '';
+
+        // 服务未启动时自动启动，等待期间按钮显示「正在启动模型 + 转圈」
+        const quick = await sendToBackground('serviceStatus');
+        if (!(quick.ok && quick.running)) {
+            openDocBtn.classList.add('loading');
+            if (lab) lab.textContent = '正在启动模型…';
+        }
+        const ready = await ensureServiceRunning();
+        openDocBtn.classList.remove('loading');
+        if (lab) lab.textContent = original;
+        if (!ready) return;
+
         chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
             chrome.tabs.create({ url: `${config.serverUrl}/pdf` });
         });
     });
 
-    serviceToggleBtn.addEventListener('click', () => {
-        const isRunning = serviceToggleBtn.classList.contains('is-danger');
-        const action = isRunning ? 'serviceStop' : 'serviceStart';
-        const verb = isRunning ? '停止' : '启动';
-        controlService(action, verb);
+    serviceToggleChk.addEventListener('change', () => {
+        const wantRun = serviceToggleChk.checked;
+        serviceRow.classList.add('svc-loading');
+        serviceState.textContent = wantRun ? '正在启动模型…' : '正在停止…';
+        setStatus('checking', wantRun ? '模型启动中' : '正在停止');
+        controlService(wantRun ? 'serviceStart' : 'serviceStop');
     });
 }
 
@@ -706,8 +730,16 @@ async function ensureServiceRunning() {
     }
     if (st.error) return false;
 
+    // 自动启动：进入「正在启动模型」反馈态（CPU 图标旋转 + 开关置灰）
+    serviceRow.classList.add('svc-loading');
+    serviceState.textContent = '正在启动模型…';
+    serviceToggleChk.disabled = true;
+    setStatus('checking', '模型启动中');
+
     const start = await sendToBackground('serviceStart');
     if (!start.ok || start.error) {
+        serviceRow.classList.remove('svc-loading');
+        serviceToggleChk.disabled = false;
         serviceHint.textContent = start.message || '服务启动失败';
         return false;
     }
@@ -716,9 +748,18 @@ async function ensureServiceRunning() {
     for (let i = 0; i < 20; i++) {
         await new Promise((r) => setTimeout(r, 1500));
         const s = await sendToBackground('serviceStatus');
-        if (s.ok && s.running) return true;
+        if (s.ok && s.running) {
+            // 即时同步 UI（不必等 4s 定时刷新）
+            serviceRow.classList.remove('svc-loading');
+            serviceState.textContent = '运行中';
+            setServiceSwitch(true, false);
+            setStatus('online', '运行正常');
+            return true;
+        }
         if (s.state === 'loading') continue; // 仍在加载，继续等
     }
+    serviceRow.classList.remove('svc-loading');
+    serviceToggleChk.disabled = false;
     serviceHint.textContent = '服务启动超时，请手动重试';
     return false;
 }
@@ -743,7 +784,7 @@ async function refreshService() {
             : (notFound ? '未找到服务管理器' : (startFail ? '宿主启动失败' : '本地服务未连接'));
         // 始终把 Chrome 的原始报错打出来，便于精确定位（不再给误导性提示）
         serviceHint.textContent = `ID ${myId}｜报错: ${msg}`;
-        serviceToggleBtn.disabled = true;
+        setServiceSwitch(false, true);
         serviceRow.title = `原始报错: ${msg}\n扩展 ID: ${myId}`;
         return;
     }
@@ -753,13 +794,13 @@ async function refreshService() {
         serviceRow.classList.add('svc-off');
         serviceState.textContent = '状态未知';
         serviceHint.textContent = `${result.message || result.error}（扩展 ID: ${myId}）`;
-        serviceToggleBtn.disabled = true;
+        setServiceSwitch(false, true);
         serviceRow.title = `扩展 ID: ${myId}`;
         return;
     }
 
     const running = result.running;
-    serviceToggleBtn.disabled = false;
+    setServiceSwitch(running, false);
     serviceRow.title = `扩展 ID: ${myId}`;
     serviceRow.classList.remove('svc-off', 'svc-loading');
 
@@ -768,7 +809,7 @@ async function refreshService() {
         serviceRow.classList.add('svc-loading');
         serviceState.textContent = '加载模型中';
         serviceHint.textContent = '首次请求会稍慢，约 10–20 秒';
-        setToggleButton('stopping', '启动中…', false);
+        setServiceSwitch(true, true);
         return;
     }
 
@@ -776,7 +817,7 @@ async function refreshService() {
         setStatus('offline', '服务已停止');
         serviceRow.classList.add('svc-off');
         serviceState.textContent = '未运行';
-        setToggleButton('start', '启动', false);
+        setServiceSwitch(false, false);
         return;
     }
 
@@ -790,19 +831,16 @@ async function refreshService() {
     } else {
         serviceHint.textContent = '常驻模式，不会自动退出';
     }
-    setToggleButton('stop', '停止', false);
+    setServiceSwitch(true, false);
 }
 
-function setToggleButton(state, label, disabled) {
-    serviceToggleBtn.textContent = label;
-    serviceToggleBtn.disabled = disabled;
-    serviceToggleBtn.classList.toggle('is-danger', state === 'stop');
+function setServiceSwitch(checked, disabled) {
+    serviceToggleChk.checked = !!checked;
+    serviceToggleChk.disabled = !!disabled;
 }
 
-async function controlService(action, verb) {
-    const original = { label: serviceToggleBtn.textContent, disabled: serviceToggleBtn.disabled };
-    serviceToggleBtn.disabled = true;
-    serviceToggleBtn.textContent = verb + '中…';
+async function controlService(action) {
+    serviceToggleChk.disabled = true;
 
     const result = await sendToBackground(action);
 
@@ -813,11 +851,9 @@ async function controlService(action, verb) {
     }
 
     await refreshService();
-    // refreshService 会重设按钮；保留 disabled 防止用户连点
-    if (!result.running && result.ok) {
-        serviceToggleBtn.disabled = false;
-    } else {
-        serviceToggleBtn.disabled = original.disabled;
+    // refreshService 会按真实状态重设开关；这里只在失败兜底解除禁用，防连点
+    if (!result.running && !result.ok) {
+        serviceToggleChk.disabled = false;
     }
 
     // 模型启动成功 → 当前页自动开始翻译（译文位置会先出现转圈提示）

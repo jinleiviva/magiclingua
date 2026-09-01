@@ -321,6 +321,20 @@ button, input, select { font-family: inherit; }
 .cta:hover { opacity: .88; }
 .cta:active { transform: scale(.99); }
 .cta:disabled { background-color: var(--line); color: var(--ink-muted); cursor: not-allowed; }
+/* 自动启动模型等待期：黑色药丸内白圈转圈 */
+.cta.loading { pointer-events: none; background-image: none; }
+.cta.loading::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 8px;
+  vertical-align: -2px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .35);
+  border-top-color: #fff;
+  animation: svc-spin .8s linear infinite;
+}
 
 /* ---------------------------------------------------------------- 卡片 */
 
@@ -550,6 +564,7 @@ button, input, select { font-family: inherit; }
 .gloss-chip {
   position: relative;
   height: 28px;
+  padding: 0 8px;
   border-radius: var(--r-md);
   background: var(--surface-2);
   border: 1px solid transparent;
@@ -670,9 +685,15 @@ button, input, select { font-family: inherit; }
 }
 /* 左半可点击：悬停高亮 teal 描边，提示可切换 */
 .svc-half:hover { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal); }
-/* 右半：纯状态展示，悬停不响应 */
-.svc-model { cursor: default; }
-.svc-model:hover { border-color: var(--line); box-shadow: none; }
+/* 右半：本地模型开关，与左半对称可点击 */
+.svc-model { cursor: pointer; }
+.svc-model:hover { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal); }
+/* 右半状态文字不再展示（顶部 status 徽标承担状态），保留元素兼容 JS 赋值 */
+.svc-model .svc-text { display: none; }
+/* 服务启动/加载中：CPU 图标旋转 + 开关置灰 */
+@keyframes svc-spin { to { transform: rotate(360deg); } }
+.svc-row.svc-loading .svc-icon { animation: svc-spin 1s linear infinite; }
+.switch input:disabled ~ .track { opacity: .55; cursor: not-allowed; }
 .svc-lab {
   font-size: 12px;
   color: var(--ink);
@@ -774,6 +795,18 @@ button, input, select { font-family: inherit; }
 .doc-row:hover { background: var(--surface-3); color: var(--ink); }
 .doc-row span { flex: 1; }
 .doc-row svg { display: block; flex-shrink: 0; }
+/* 自动启动模型等待期：行内灰色转圈 */
+.doc-row.loading { pointer-events: none; }
+.doc-row.loading::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--ink-soft);
+  animation: svc-spin .8s linear infinite;
+}
 
 /* --------------------------------------------------- 字幕导出按钮 */
 
