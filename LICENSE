@@ -28,3 +28,22 @@ SOFTWARE.
 受 **Tencent HY Community License Agreement** 约束，详见同目录下的
 `MODEL_LICENSE.txt`。该模型许可与本项目代码的 MIT 许可证相互独立，
 使用模型时须同时遵守模型许可的条款（含地域限制与商标披露要求）。
+
+---
+
+## 第三方软件许可证
+
+本项目代码以 MIT 许可证发布，但运行依赖中包含若干第三方开源组件，
+各有其独立的许可证，且其中部分为 **AGPL-3.0**（强 copyleft）：
+
+- **PyMuPDF**（PDF 解析）与 **BabelDOC**（PDF 双语排版）采用
+  **GNU Affero General Public License v3.0 (AGPL-3.0)**。AGPL 条款独立于
+  本项目 MIT 许可；若你修改这些组件并通过网络提供服务，或对其进行闭源
+  再分发，须遵守 AGPL-3.0（含公开对应修改版源码的义务）。PyMuPDF 亦提供
+  Artifex 商业许可证作为替代。
+- 其余依赖（llama-cpp-python、Flask、numpy、opencv-python、Pillow、
+  huggingface_hub、requests、diskcache、jinja2、typing-extensions 等）
+  采用 MIT / BSD / Apache-2.0 等宽松许可证。
+
+完整依赖清单、各组件版本与许可证链接见同目录下的 `THIRD_PARTY_LICENSES.md`。
+上述第三方组件的许可证文本以其各自上游仓库公布为准；本项目 MIT 许可不覆盖这些组件。

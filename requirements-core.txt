@@ -3,10 +3,14 @@
 # - 不含 llama-cpp-python：macOS Apple Silicon 由 setup_env.sh 安装官方预编译
 #   wheel（免编译），其他平台由 setup_env.sh 走源码编译，因此不放在本文件。
 # - 不含 babeldoc / PyMuPDF / opencv（PDF 翻译按需，见 requirements-pdf.txt）。
+#
+# 版本锁定说明：下方版本取自本机已验证可运行的 venv，保证「重建 venv = 当前
+# 工作状态」，避免拉到不兼容大版本（如 numpy 2→3）导致装好即崩。
+# 若需升级，请先在 venv 中实测无误后再 here 更新。
 Flask==3.0.0
-numpy
-diskcache
-jinja2
-typing-extensions
-huggingface_hub
-requests
+numpy==2.2.6
+diskcache==5.6.3
+Jinja2==3.1.6
+typing-extensions==4.15.0
+huggingface_hub==0.36.0
+requests==2.32.5

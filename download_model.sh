@@ -4,7 +4,7 @@ set -euo pipefail
 #
 # 特性：
 # - 已存在则跳过（幂等，重复执行不会重下）
-# - curl 直连 + 断点续传 + 字节数校验（content-range / x-linked-size）
+# - curl 直连 + 断点续传 + 字节数校验（content-range / x-linked-size）+ SHA256 完整性校验
 # - 默认走魔搭社区 modelscope.cn（国内 CDN，实测约 10MB/s，比 hf-mirror 快 5 倍），
 #   腾讯官方命名空间 Tencent-Hunyuan；可用环境变量切换回 HuggingFace。
 #
@@ -39,11 +39,25 @@ PART="$DEST.part"
 
 mkdir -p models
 
+# ------------------------------------------------- SHA256 基线 ----------
+# 模型完整性 / 防投毒校验。默认值取自官方源当前发布版本的本地基准快照哈希；
+# 若切换模型变体（如 7B / 其他量化档），必须通过环境变量 EXPECTED_SHA256
+# 覆盖为对应变体的官方哈希，否则下载后校验会失败并删除文件。
+# ⚠️ 权威哈希应以模型发布页（modelscope / HuggingFace）公布的为准。
+EXPECTED_SHA256="${EXPECTED_SHA256:-dc5f44fcf1fa496ee7ad725982c0c8c553a4de00259b53af84c4b89fb0c06699}"
+
 # ---------------------------------------------------------------- 幂等 -------
 if [ -f "$DEST" ] && [ -s "$DEST" ]; then
     SIZE="$(du -h "$DEST" | cut -f1)"
     echo "已存在：models/${FILE}（${SIZE}），跳过下载"
     echo "如需强制重下，先删除该文件再运行本脚本。"
+    # 已存在也复核哈希（若 EXPECTED_SHA256 已设置），不匹配仅告警不阻断。
+    if [ -n "$EXPECTED_SHA256" ]; then
+        actual_sha="$(sha256_of "$DEST")"
+        [ "$actual_sha" = "$EXPECTED_SHA256" ] \
+            && echo "🔒 SHA256 校验通过" \
+            || echo "⚠ SHA256 与基线不符（可能变体不同或文件损坏），建议删除后重下"
+    fi
     exit 0
 fi
 
@@ -70,6 +84,26 @@ check_size() {
     local actual
     actual="$(stat -f%z "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null || echo 0)"
     [ "$actual" = "$EXPECTED" ]
+}
+
+# SHA256 校验：macOS 用 shasum，Linux 用 sha256sum
+sha256_of() {
+    shasum -a 256 "$1" 2>/dev/null | awk '{print $1}' \
+        || sha256sum "$1" 2>/dev/null | awk '{print $1}'
+}
+verify_sha256() {
+    [ -z "$EXPECTED_SHA256" ] && return 0
+    local actual
+    actual="$(sha256_of "$1")"
+    if [ "$actual" = "$EXPECTED_SHA256" ]; then
+        echo "🔒 SHA256 校验通过：$actual"
+        return 0
+    fi
+    echo "✗ SHA256 校验失败！"
+    echo "   期望：$EXPECTED_SHA256"
+    echo "   实际：$actual"
+    echo "   文件可能损坏或被篡改，请勿使用该模型。"
+    return 1
 }
 
 dl() {
@@ -100,6 +134,9 @@ if ! check_size "$PART"; then
 fi
 
 mv "$PART" "$DEST"
+if ! verify_sha256 "$DEST"; then
+    echo "下载完成但校验失败，正在删除损坏文件..."; rm -f "$DEST"; exit 1
+fi
 echo ""
 echo "✅ 完成：models/${FILE}（$(du -h "$DEST" | cut -f1)）"
 echo "提示：也可用环境变量自定义，例如"

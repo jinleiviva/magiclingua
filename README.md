@@ -320,8 +320,11 @@ magiclingua/
 - [BabelDOC](https://github.com/funstory-ai/BabelDOC) — PDF 版面解析与双语排版
 - [PyMuPDF](https://pymupdf.readthedocs.io/) — PDF 处理；[Flask](https://flask.palletsprojects.com/) — 本地服务
 
+> ⚠️ **第三方组件许可证（重要）**：本项目自身代码以 MIT 发布，但运行依赖中包含 **AGPL-3.0** 强 copyleft 组件——[PyMuPDF](https://pymupdf.readthedocs.io/)（PDF 解析）与 [BabelDOC](https://github.com/funstory-ai/BabelDOC)（PDF 双语排版）。AGPL 条款**独立于本项目 MIT 许可**：若你修改这些组件并通过网络提供服务，或对其进行闭源再分发，须遵守 AGPL-3.0（含公开修改版源码的义务）。完整清单与各组件许可证见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
+
 - **本项目代码**：[MIT License](LICENSE)
 - **翻译模型**：[Tencent HY Community License Agreement](MODEL_LICENSE.txt) — 商业可用；月活超 1 亿需向腾讯单独申请授权；**不适用于欧盟 / 英国 / 韩国**；再分发须附协议副本与 `NOTICE`；禁止用于改进其他 AI 模型、军事或高风险自动决策等
+- **第三方组件**：含 AGPL-3.0 与多项宽松许可证（MIT / BSD / Apache-2.0），详见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 - **声明**：MagicLingua 与腾讯及 Hunyuan 团队不存在从属、授权或背书关系
 
 ---
