@@ -35,7 +35,7 @@
 
 MagicLingua is a browser translation assistant that runs **entirely on your own machine**: full-page web translation, YouTube bilingual subtitles, and PDF / EPUB / TXT document translation. No account, no cloud, no cost — your content never leaves your computer. Free and open source (MIT) forever.
 
-Quick start: ① `./setup_env.sh` ② `./download_model.sh` ③ `./start_server_gguf.sh`, then load the `extension/` folder via `chrome://extensions` (Developer Mode). The Chinese docs below cover everything else; English issues and PRs are welcome.
+Quick start: download the repo and run `./install.command` (one-click: venv + engine + model from ModelScope + auto-launch), or run `./setup_env.sh` / `./download_model.sh` / `./start_server_gguf.sh` manually — then load the `extension/` folder via `chrome://extensions` (Developer Mode). The Chinese docs below cover everything else; English issues and PRs are welcome.
 
 > The bundled translation model is licensed under the *Tencent HY Community License Agreement*, which **does not apply to the EU, UK, or South Korea** — see [`MODEL_LICENSE.txt`](MODEL_LICENSE.txt).
 
@@ -219,7 +219,7 @@ git clone https://github.com/jinleiviva/magiclingua.git && cd magiclingua
 
 ## 常见问题
 
-- **服务起不来？** 依次检查：模型下了没（`ls models/*.gguf`）、依赖装了没（`pip list | grep llama-cpp`）、端口被占没（`lsof -i :18770`），然后看日志 `tail -f log_server.txt` 找原因。
+- **服务起不来？** 依次检查：模型下了没（`ls models/*.gguf`）、依赖装了没（`venv/bin/python -m pip list | grep llama-cpp`）、端口被占没（`lsof -i :18770`），然后看日志 `tail -f log_server.txt` 找原因。
 - **提示找不到模型？** 跑一次 `./download_model.sh`；或自己指定路径：`export HYMT_MODEL_PATH=/你的/模型路径.gguf`。
 - **翻译速度慢？** 首次翻译要加载模型会慢一点（10–20 秒），之后就快了；翻译过的内容有缓存，再翻是秒出。换更大或更小的模型可以调节质量与速度（见「给开发者」）。
 - **我的电脑能跑吗？** 近五年的 Mac / Windows / Linux 都可以。有 NVIDIA 显卡更快，没有显卡纯 CPU 也能跑。手机和纯浏览器环境不支持。
