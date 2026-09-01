@@ -49,19 +49,16 @@
 
     <!-- ===================== 主视图（高频动作） ===================== -->
     <main class="body view" id="viewMain">
-        <!-- 全局总开关：启用翻译 -->
-        <div class="row">
-            <label class="pill">
+        <!-- 全局开关 + 本地模型：合并一行（左开关，右模型状态 + 启停） -->
+        <div class="row svc-row" id="serviceRow" title="">
+            <label class="pill sm" title="关闭后网页不再自动翻译">
                 <span>启用翻译</span>
                 <span class="switch sm">
                     <input type="checkbox" id="enabledToggle">
                     <span class="track"><span class="knob"></span></span>
                 </span>
             </label>
-        </div>
-
-        <!-- 本地模型：运行状态 + 启动/停止（服务地址配置在设置视图） -->
-        <div class="row svc-row" id="serviceRow" title="">
+            <span class="svc-divider" aria-hidden="true"></span>
             <svg class="svc-icon" width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true">
                 <rect x="3.5" y="3.5" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.7" />
                 <rect x="7" y="7" width="4" height="4" rx="0.8" stroke="currentColor" stroke-width="1.7" />
@@ -94,8 +91,72 @@
             </label>
         </div>
 
-        <!-- 主行动：整页翻译 -->
-        <button id="pageTranslateBtn" class="cta">翻译本页</button>
+        <!-- 主行动区：翻译本页 + 语言/显示设置（一张卡片，翻译前先选语言） -->
+        <div class="card action-card">
+            <button id="pageTranslateBtn" class="cta">翻译本页</button>
+            <div class="row">
+                <label class="chip">
+                    <span class="chip-lab">目标语言</span>
+                    <select id="targetLanguage">
+                        <optgroup label="常用">
+                            <option value="Chinese">中文</option>
+                            <option value="Traditional Chinese">繁體中文</option>
+                            <option value="English">English</option>
+                            <option value="Japanese">日本語</option>
+                            <option value="Korean">한국어</option>
+                            <option value="French">Français</option>
+                            <option value="German">Deutsch</option>
+                            <option value="Spanish">Español</option>
+                            <option value="Russian">Русский</option>
+                        </optgroup>
+                        <optgroup label="欧洲语言">
+                            <option value="Portuguese">Português</option>
+                            <option value="Italian">Italiano</option>
+                            <option value="Dutch">Nederlands</option>
+                            <option value="Polish">Polski</option>
+                            <option value="Czech">Čeština</option>
+                            <option value="Ukrainian">Українська</option>
+                        </optgroup>
+                        <optgroup label="亚洲语言">
+                            <option value="Thai">ไทย</option>
+                            <option value="Vietnamese">Tiếng Việt</option>
+                            <option value="Indonesian">Bahasa Indonesia</option>
+                            <option value="Malay">Bahasa Melayu</option>
+                            <option value="Filipino">Filipino</option>
+                            <option value="Hindi">हिन्दी</option>
+                            <option value="Bengali">বাংলা</option>
+                            <option value="Tamil">தமிழ்</option>
+                            <option value="Telugu">తెలుగు</option>
+                            <option value="Urdu">اردو</option>
+                            <option value="Gujarati">ગુજરાતી</option>
+                            <option value="Marathi">मराठी</option>
+                            <option value="Khmer">ខ្មែរ</option>
+                            <option value="Burmese">မြန်မာ</option>
+                        </optgroup>
+                        <optgroup label="中东方言">
+                            <option value="Turkish">Türkçe</option>
+                            <option value="Arabic">العربية</option>
+                            <option value="Persian">فارسی</option>
+                            <option value="Hebrew">עברית</option>
+                        </optgroup>
+                        <optgroup label="中文变体与民汉互译">
+                            <option value="Cantonese">粵語</option>
+                            <option value="Tibetan">藏文</option>
+                            <option value="Kazakh">哈萨克文</option>
+                            <option value="Mongolian">蒙古文</option>
+                            <option value="Uyghur">维吾尔文</option>
+                        </optgroup>
+                    </select>
+                </label>
+                <label class="chip">
+                    <span class="chip-lab">网页显示</span>
+                    <select id="displayMode">
+                        <option value="append">原文 + 译文</option>
+                        <option value="replace">仅显示译文</option>
+                    </select>
+                </label>
+            </div>
+        </div>
 
         <!-- 视频站：导出双语字幕（VideoAdapter 运行且拿到字幕轨时才显示） -->
         <button id="exportSubtitleBtn" class="sub-row hidden">
@@ -106,70 +167,6 @@
             </svg>
             <span class="sub-label">导出双语字幕 (SRT)</span>
         </button>
-
-        <!-- 每页最常改：目标语言 + 显示模式 -->
-        <div class="row">
-            <label class="chip">
-                <span class="chip-lab">目标语言</span>
-                <select id="targetLanguage">
-                    <optgroup label="常用">
-                        <option value="Chinese">中文</option>
-                        <option value="Traditional Chinese">繁體中文</option>
-                        <option value="English">English</option>
-                        <option value="Japanese">日本語</option>
-                        <option value="Korean">한국어</option>
-                        <option value="French">Français</option>
-                        <option value="German">Deutsch</option>
-                        <option value="Spanish">Español</option>
-                        <option value="Russian">Русский</option>
-                    </optgroup>
-                    <optgroup label="欧洲语言">
-                        <option value="Portuguese">Português</option>
-                        <option value="Italian">Italiano</option>
-                        <option value="Dutch">Nederlands</option>
-                        <option value="Polish">Polski</option>
-                        <option value="Czech">Čeština</option>
-                        <option value="Ukrainian">Українська</option>
-                    </optgroup>
-                    <optgroup label="亚洲语言">
-                        <option value="Thai">ไทย</option>
-                        <option value="Vietnamese">Tiếng Việt</option>
-                        <option value="Indonesian">Bahasa Indonesia</option>
-                        <option value="Malay">Bahasa Melayu</option>
-                        <option value="Filipino">Filipino</option>
-                        <option value="Hindi">हिन्दी</option>
-                        <option value="Bengali">বাংলা</option>
-                        <option value="Tamil">தமிழ்</option>
-                        <option value="Telugu">తెలుగు</option>
-                        <option value="Urdu">اردو</option>
-                        <option value="Gujarati">ગુજરાતી</option>
-                        <option value="Marathi">मराठी</option>
-                        <option value="Khmer">ខ្មែរ</option>
-                        <option value="Burmese">မြန်မာ</option>
-                    </optgroup>
-                    <optgroup label="中东方言">
-                        <option value="Turkish">Türkçe</option>
-                        <option value="Arabic">العربية</option>
-                        <option value="Persian">فارسی</option>
-                        <option value="Hebrew">עברית</option>
-                    </optgroup>
-                    <optgroup label="中文变体与民汉互译">
-                        <option value="Cantonese">粵語</option>
-                        <option value="Tibetan">藏文</option>
-                        <option value="Kazakh">哈萨克文</option>
-                        <option value="Mongolian">蒙古文</option>
-                        <option value="Uyghur">维吾尔文</option>
-                    </optgroup>
-                </select>
-            </label>
-            <label class="chip">
-                <span class="chip-lab">网页显示</span>
-                <select id="displayMode">
-                    <option value="append">原文 + 译文</option>
-                    <option value="replace">仅显示译文</option>
-                </select>
-            </label>
-        </div>
 
         <!-- 文档翻译入口（PDF / EPUB / TXT / 字幕文件，独立任务入口） -->
         <a class="doc-row" id="openDocBtn" href="#" role="button">

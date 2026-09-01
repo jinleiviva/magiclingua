@@ -578,13 +578,13 @@ button, input, select { font-family: inherit; }
 /* ------------------------------------------------------------ 服务卡 */
 
 .svc { gap: 8px; }
-/* 主视图服务行：模型状态 + 启动/停止 */
+/* 主视图服务行：启用翻译开关 + 模型状态 + 启动/停止（合并一行） */
 .svc-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 40px;
-  padding: 0 12px;
+  gap: 8px;
+  height: 42px;
+  padding: 0 8px;
   border-radius: var(--r-md);
   background: var(--surface-2);
   border: 1px solid transparent;
@@ -592,6 +592,23 @@ button, input, select { font-family: inherit; }
 }
 @media (prefers-color-scheme: dark) {
   .svc-row { background: var(--surface-2); border-color: transparent; }
+}
+/* 合并行的「启用翻译」开关：紧凑尺寸，不参与 flex 拉伸 */
+.svc-row .pill {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 6px 0 10px;
+  font-size: 11.5px;
+}
+.svc-row .pill .switch.sm .track { width: 34px; height: 19px; }
+/* 开关与模型状态之间的细分隔线 */
+.svc-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+  flex-shrink: 0;
 }
 /* 运行状态色：默认 teal=运行中，停止=灰，加载中=黄 */
 .svc-row.svc-off .svc-dot { background: var(--ink-muted); }
@@ -688,7 +705,7 @@ button, input, select { font-family: inherit; }
   .addr { background: var(--surface-2); border-color: var(--line); }
 }
 
-/* --------------------------------------------------- 文档入口（黄底） */
+/* --------------------------------------------------- 文档入口（中性色，次要行动） */
 
 .doc-row {
   display: flex;
@@ -697,14 +714,16 @@ button, input, select { font-family: inherit; }
   height: 40px;
   padding: 0 10px;
   border-radius: var(--r-md);
-  background: var(--surface-yellow);
-  color: var(--yellow-dark);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  color: var(--ink-soft);
   font-size: 12px;
   font-weight: 500;
   text-decoration: none;
   cursor: pointer;
+  transition: background .15s ease, color .15s ease;
 }
-.doc-row:hover { filter: brightness(.98); }
+.doc-row:hover { background: var(--surface-3); color: var(--ink); }
 .doc-row span { flex: 1; }
 .doc-row svg { display: block; flex-shrink: 0; }
 
