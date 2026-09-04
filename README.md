@@ -6,6 +6,7 @@
 
 不用账号 · 不上传内容 · 永久免费 · 开源
 
+[![CI](https://github.com/jinleiviva/magiclingua/actions/workflows/ci.yml/badge.svg)](https://github.com/jinleiviva/magiclingua/actions/workflows/ci.yml)
 [![version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/jinleiviva/magiclingua/releases)
 [![license](https://img.shields.io/badge/code%20license-MIT-green)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](README.md)

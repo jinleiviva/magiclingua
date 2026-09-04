@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Byte-compile all Python sources
+        run: |
+          set -euo pipefail
+          count=$(git ls-files '*.py' | wc -l | tr -d ' ')
+          echo "Compiling $count Python file(s)"
+          git ls-files -z '*.py' | xargs -0 python -m py_compile
+          echo "OK"
+
+  extension:
+    name: Chrome extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Syntax check extension JavaScript (MV3 classic scripts)
+        run: |
+          set -euo pipefail
+          count=$(git ls-files 'extension/*.js' | wc -l | tr -d ' ')
+          git ls-files -z 'extension/*.js' | xargs -0 -n1 node --check
+          echo "OK: $count JS file(s) parsed"
+
+      - name: Validate manifest.json references
+        run: |
+          python - <<'PY'
+          import json, os
+
+          root = 'extension'
+          with open(os.path.join(root, 'manifest.json'), encoding='utf-8') as fh:
+              m = json.load(fh)
+
+          assert m.get('manifest_version') == 3, 'manifest_version must be 3'
+          for key in ('name', 'version', 'description'):
+              assert m.get(key), f'missing required field: {key}'
+
+          action = m.get('action', {})
+          refs = []
+          if m.get('background', {}).get('service_worker'):
+              refs.append(m['background']['service_worker'])
+          for cs in m.get('content_scripts', []):
+              refs.extend(cs.get('js', []))
+          if action.get('default_popup'):
+              refs.append(action['default_popup'])
+          refs.extend(str(v) for v in m.get('icons', {}).values())
+          refs.extend(str(v) for v in action.get('default_icon', {}).values())
+
+          missing = [r for r in refs if not os.path.isfile(os.path.join(root, r))]
+          assert not missing, f'manifest references missing file(s): {missing}'
+
+          print(f"OK: {m['name']} v{m['version']} - {len(refs)} referenced path(s) resolved")
+          PY
+
+  shell:
+    name: Shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse all shell entrypoints
+        run: |
+          set -euo pipefail
+          count=$(git ls-files '*.sh' '*.command' | wc -l | tr -d ' ')
+          git ls-files -z '*.sh' '*.command' | xargs -0 -n1 bash -n
+          echo "OK: $count shell script(s) parsed"
+
+  integrity:
+    name: OSS compliance files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Required license files present and non-empty
+        run: |
+          set -euo pipefail
+          for f in LICENSE NOTICE THIRD_PARTY_LICENSES.md MODEL_LICENSE.txt; do
+            if [ ! -s "$f" ]; then echo "missing or empty: $f"; exit 1; fi
+          done
+          echo "OK: LICENSE, NOTICE, THIRD_PARTY_LICENSES.md, MODEL_LICENSE.txt"
