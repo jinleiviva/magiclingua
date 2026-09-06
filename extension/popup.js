@@ -21,6 +21,11 @@ const DEFAULT_CONFIG = {
     fontSize: 24,
     serverUrl: 'http://localhost:18770',
     blacklist: [],
+    // 站点级「自动翻译」白名单：打开这些站点的新页面时后台自动整页翻译
+    alwaysTranslateSites: [],
+    // 服务空闲策略（分钟，0 = 常驻不自动退出）；由 background 在服务启动后
+    // POST /v1/config 应用，服务端持久化到 config.json
+    idleExitMin: 20,
     activeGlossaries: ['finance', 'tech'],
     customGlossary: {},
     customGlossaryEnabled: true,
@@ -42,7 +47,7 @@ const STYLE_PRESETS = [
 
 // DOM 元素（显式声明，不依赖 id 隐式全局）
 const enabledToggle = document.getElementById('enabledToggle');
-const siteToggle = document.getElementById('siteToggle');
+const siteMode = document.getElementById('siteMode');
 const currentSiteDomain = document.getElementById('currentSiteDomain');
 const targetLanguage = document.getElementById('targetLanguage');
 const displayMode = document.getElementById('displayMode');
@@ -51,6 +56,7 @@ const pdfBilingualToggle = document.getElementById('pdfBilingualToggle');
 const fontSize = document.getElementById('fontSize');
 const fontSizeValue = document.getElementById('fontSizeValue');
 const serverUrl = document.getElementById('serverUrl');
+const idleExitMin = document.getElementById('idleExitMin');
 const openDocBtn = document.getElementById('openDocBtn');
 const statusText = document.getElementById('statusText');
 const statusBox = document.getElementById('status');
@@ -218,14 +224,18 @@ function initCurrentSite() {
             currentSiteDomain.textContent = initialHostname;
 
             chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
-                const isBlacklisted = (config.blacklist || []).some(
+                // 三态：off（黑名单）/ auto（自动翻译白名单）/ manual（默认，点按钮翻）
+                const blacklisted = (config.blacklist || []).some(
                     d => initialHostname.includes(d)
                 );
-                siteToggle.checked = !isBlacklisted;
+                const auto = (config.alwaysTranslateSites || []).some(
+                    d => initialHostname.includes(d)
+                );
+                siteMode.value = blacklisted ? 'off' : (auto ? 'auto' : 'manual');
             });
         } catch (e) {
             currentSiteDomain.textContent = '无法获取当前域名';
-            siteToggle.disabled = true;
+            siteMode.disabled = true;
         }
     });
 }
@@ -254,6 +264,7 @@ function loadConfig() {
         fontSize.value = config.fontSize;
         fontSizeValue.textContent = `${config.fontSize}px`;
         serverUrl.value = config.serverUrl;
+        idleExitMin.value = String(config.idleExitMin ?? 20);
 
         // 悬停翻译 + 译文样式
         hoverToggle.checked = config.hoverTranslate !== false;
@@ -491,20 +502,40 @@ function attachEventListeners() {
         notifyActiveTab({ action: 'autoTranslatePage', enabled });
     });
 
-    siteToggle.addEventListener('change', () => {
+    // 本站翻译三态：auto（自动翻译白名单）/ manual（默认）/ off（黑名单）
+    siteMode.addEventListener('change', async () => {
         if (!initialHostname) return;
+        const mode = siteMode.value;
 
         chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
             let blacklist = config.blacklist || [];
+            let auto = config.alwaysTranslateSites || [];
 
-            if (siteToggle.checked) {
-                blacklist = blacklist.filter(d => !initialHostname.includes(d));
-            } else if (!blacklist.includes(initialHostname)) {
-                blacklist.push(initialHostname);
+            // 先移除本站，再按新模式落位；移除用 includes 匹配，
+            // 兼容历史条目存的是子域（如 docs.google.com）的情况
+            blacklist = blacklist.filter(d => !initialHostname.includes(d));
+            auto = auto.filter(d => !initialHostname.includes(d));
+
+            if (mode === 'off') {
+                if (!blacklist.includes(initialHostname)) blacklist.push(initialHostname);
+            } else if (mode === 'auto') {
+                if (!auto.includes(initialHostname)) auto.push(initialHostname);
             }
 
-            saveConfig({ blacklist });
+            saveConfig({ blacklist, alwaysTranslateSites: auto });
         });
+
+        // 「启用翻译」总开关关闭时不动当前页（本来就不在自动翻译状态）
+        if (!enabledToggle.checked) return;
+
+        if (mode === 'auto') {
+            // 选「自动翻译」时当前页立即生效：服务未启动则先拉起
+            const ready = await ensureServiceRunning();
+            if (ready) notifyActiveTab({ action: 'autoTranslatePage', enabled: true });
+        } else {
+            // 切到「点按钮翻 / 不翻译」时撤掉当前页的自动翻译
+            notifyActiveTab({ action: 'autoTranslatePage', enabled: false });
+        }
     });
 
     targetLanguage.addEventListener('change', () => {
@@ -534,6 +565,28 @@ function attachEventListeners() {
     serverUrl.addEventListener('change', () => {
         saveConfig({ serverUrl: serverUrl.value.trim() });
         refreshService();
+    });
+
+    // 空闲策略（省电 / 常驻）：保存到扩展配置；服务运行中时立即生效——
+    // POST /v1/config 会更新运行中的 watchdog 并持久化到服务端 config.json，
+    // 下次启动自动沿用。失败不打断：background 在下次服务启动后会再应用一次
+    idleExitMin.addEventListener('change', async () => {
+        const minutes = Number.isNaN(parseInt(idleExitMin.value, 10))
+            ? 20 : parseInt(idleExitMin.value, 10);
+        saveConfig({ idleExitMin: minutes });
+
+        const st = await sendToBackground('serviceStatus');
+        if (!(st.ok && st.running)) return;
+        try {
+            const base = serverUrl.value.trim() || 'http://localhost:18770';
+            await fetch(`${base.replace(/\/+$/, '')}/v1/config`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ idle_exit_min: minutes })
+            });
+        } catch (e) {
+            console.warn('HY-MT: 空闲策略即时应用失败（下次启动时生效）', e);
+        }
     });
 
     // 悬停翻译：总开关 + 触发修饰键

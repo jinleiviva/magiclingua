@@ -200,6 +200,10 @@ inference_lock = threading.Lock()
 # 连续 IDLE_EXIT_MIN 分钟没有真实请求就自己退出，内存归零；
 # 需要时由浏览器插件经 Native Messaging 重新拉起。
 # 设 HYMT_IDLE_EXIT=0 可关闭该行为（常驻）。
+#
+# IDLE_EXIT_MIN 是运行时可变的：插件面板的「省电 / 常驻」开关通过
+# POST /v1/config {"idle_exit_min": 0} 直接改它，并持久化到 config.json，
+# 下次启动自动沿用（见下方 user_config 加载后的覆盖）。
 # --------------------------------------------------------------------------
 
 IDLE_EXIT_MIN = float(os.getenv("HYMT_IDLE_EXIT", "20"))
@@ -253,18 +257,43 @@ def _exit_clean(code=0):
     os._exit(code)
 
 
-def _idle_watchdog():
-    if IDLE_EXIT_MIN <= 0:
-        logger.info("空闲自动退出已关闭（HYMT_IDLE_EXIT=0），服务常驻")
-        return
+def apply_idle_exit_minutes(value):
+    """运行时切换空闲退出策略（插件面板「省电 / 常驻」）。
 
-    limit = IDLE_EXIT_MIN * 60
+    value: 分钟数，0 = 常驻不自动退出。
+    切换时重置活动时间戳：否则从常驻切回限时后，会拿「上一次真实请求」的
+    陈旧时间戳计算空闲时长，可能在切换后的第一个检查周期就立刻退出。
+    """
+    global IDLE_EXIT_MIN, _last_activity
+
+    try:
+        minutes = float(value)
+    except (TypeError, ValueError):
+        logger.warning(f"忽略非法 idle_exit_min: {value!r}")
+        return False
+    if minutes < 0:
+        minutes = 0.0
+
+    IDLE_EXIT_MIN = minutes
+    with _activity_lock:
+        _last_activity = time.time()
+    logger.info(
+        "空闲退出策略已更新: %s",
+        "常驻（不自动退出）" if minutes <= 0 else f"{minutes:.0f} 分钟",
+    )
+    return True
+
+
+def _idle_watchdog():
+    # 常驻模式下线程继续空转而不是退出：用户在面板里随时能切回省电，
+    # 线程提前结束就再也收不回来了。每轮重新读 IDLE_EXIT_MIN。
     while True:
         time.sleep(30)
         with _activity_lock:
             idle = time.time() - _last_activity
             busy = _active_jobs > 0
-        if busy or idle < limit:
+        limit = IDLE_EXIT_MIN * 60
+        if limit <= 0 or busy or idle < limit:
             continue
         logger.info(
             "已空闲 %.0f 分钟，自动退出以释放模型内存（下次由插件按需拉起）",
@@ -347,13 +376,15 @@ def traceback_format():
 # --------------------------------------------------------------------------
 
 DEFAULT_CONFIG = {
-    "source_lang": "auto",
+    # 源语言不设固定项：HY-MT 自动识别源语言（模型能力），历史配置里的
+    # source_lang 键读进来也只是无人使用的残留，不影响行为
     "target_lang": "zh",
     "font_size": 28,
     "theme_mode": "dark",
     "display_mode": "append",
     "bilingual_subtitle": False,
     "stream_output": True,
+    "idle_exit_min": 20,
     "pdf_engine": "babeldoc",
     "pdf_qps": 3,
     "enabled_websites": {"youtube": True, "twitter": True},
@@ -389,6 +420,15 @@ def save_config(config):
 
 
 user_config = load_config()
+
+# 面板里选过空闲策略就沿用（config.json 持久化的值优先于环境变量）。
+# 环境变量 HYMT_IDLE_EXIT 仍然有效，只是作为「从未在面板设置过」时的默认值。
+_saved_idle_exit = user_config.get("idle_exit_min")
+if _saved_idle_exit is not None:
+    try:
+        IDLE_EXIT_MIN = max(0.0, float(_saved_idle_exit))
+    except (TypeError, ValueError):
+        logger.warning(f"config.json 里 idle_exit_min 非法（{_saved_idle_exit!r}），回退环境变量值")
 
 
 # --------------------------------------------------------------------------
@@ -583,6 +623,9 @@ def handle_config():
     if request.method == "POST":
         new_config = request.json
         if new_config:
+            # 空闲策略特殊处理：除写入持久化配置外，还要立即作用于运行中的服务
+            if "idle_exit_min" in new_config:
+                apply_idle_exit_minutes(new_config["idle_exit_min"])
             user_config.update(new_config)
             save_config(user_config)
             logger.info("配置已更新")
@@ -2812,7 +2855,11 @@ def main():
 
     if IDLE_EXIT_MIN > 0:
         logger.info(f"空闲 {IDLE_EXIT_MIN:.0f} 分钟自动退出（HYMT_IDLE_EXIT=0 可关闭）")
-        threading.Thread(target=_idle_watchdog, daemon=True).start()
+    else:
+        logger.info("空闲自动退出已关闭（常驻模式）")
+    # watchdog 常驻线程：内部每轮动态读取 IDLE_EXIT_MIN，
+    # 支持面板在运行时于「省电 / 常驻」之间切换
+    threading.Thread(target=_idle_watchdog, daemon=True).start()
 
     app.run(host="127.0.0.1", port=PORT, threaded=True)
 

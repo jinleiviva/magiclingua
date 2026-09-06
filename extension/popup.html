@@ -90,10 +90,11 @@
                 </span>
                 <span class="domain" id="currentSiteDomain">—</span>
                 <span class="site-lab">本站翻译</span>
-                <label class="switch sm" title="关闭后本站点不再翻译">
-                    <input type="checkbox" id="siteToggle" checked>
-                    <span class="track"><span class="knob"></span></span>
-                </label>
+                <select id="siteMode" class="site-mode" title="自动：打开本站新页面时自动整页翻译；点按钮翻：仅手动触发">
+                    <option value="auto">自动翻译</option>
+                    <option value="manual">点按钮翻</option>
+                    <option value="off">不翻译</option>
+                </select>
             </div>
             <div class="row">
                 <label class="chip">
@@ -277,6 +278,15 @@
         <section class="card svc">
             <div class="sec-title">服务地址</div>
             <input type="text" id="serverUrl" class="addr" spellcheck="false">
+            <div class="row">
+                <label class="chip" title="常驻：模型一直驻留内存，翻译秒出；省电：空闲一段时间后自动释放内存，下次使用重新加载（约 10–20 秒）">
+                    <span class="chip-lab">空闲策略</span>
+                    <select id="idleExitMin">
+                        <option value="20">省电（空闲 20 分钟退出）</option>
+                        <option value="0">常驻（不自动退出）</option>
+                    </select>
+                </label>
+            </div>
             <p class="gloss-hint">本地模型状态与启停按钮在主页顶部</p>
         </section>
     </main>

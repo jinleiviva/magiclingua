@@ -12,7 +12,6 @@ importScripts('glossaries.js');
 
 const DEFAULT_CONFIG = {
     enabled: true,
-    sourceLanguage: 'auto',
     targetLanguage: 'Chinese',
     serverUrl: 'http://localhost:18770',
     fontSize: 24,
@@ -28,6 +27,11 @@ const DEFAULT_CONFIG = {
         'github.com', 'gitlab.com', 'stackoverflow.com',
         'localhost', '127.0.0.1'
     ],
+    // 站点级「自动翻译」白名单：这些站点的新页面加载完成后，
+    // 后台确保服务就绪并自动整页翻译（popup 主视图「本站翻译=自动翻译」维护）
+    alwaysTranslateSites: [],
+    // 服务空闲策略（分钟，0 = 常驻）；服务每次启动成功后 POST /v1/config 应用
+    idleExitMin: 20,
     // 术语表：勾选的词库 + 用户自定义（未勾选的不生效）
     activeGlossaries: ['finance', 'tech'],
     customGlossary: {},
@@ -211,7 +215,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             return true;
         case 'serviceStart':
             nativeCall({ action: 'start' })
-                .then(result => sendResponse(result))
+                .then(result => {
+                    // 启动成功后把面板选的空闲策略同步给服务（省电/常驻，
+                    // 服务端持久化到 config.json，下次启动自动沿用）
+                    if (result && result.ok && result.running) {
+                        applyIdleExitPolicy();
+                    }
+                    sendResponse(result);
+                })
                 .catch(error => sendResponse({ ok: false, error: 'EXCEPTION', message: error.message }));
             return true;
         case 'serviceStop':
@@ -261,6 +272,111 @@ async function serviceStatus() {
         }
     }
     return result;
+}
+
+/**
+ * 把面板选的空闲策略（idleExitMin）应用到运行中的服务。
+ * 服务端会把该值持久化进自己的 config.json，下次启动自动沿用；
+ * 失败不影响服务可用性（下次启动会再应用一次）。
+ */
+async function applyIdleExitPolicy() {
+    try {
+        const config = await new Promise(resolve => {
+            chrome.storage.sync.get(DEFAULT_CONFIG, resolve);
+        });
+        const minutes = Number.isFinite(config.idleExitMin) ? config.idleExitMin : 20;
+        await fetch(`${String(config.serverUrl).replace(/\/+$/, '')}/v1/config`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idle_exit_min: minutes }),
+            signal: AbortSignal.timeout(3000)
+        });
+    } catch (e) {
+        // 静默：空闲策略属于体验优化，应用失败不必打扰用户
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 站点级自动翻译
+//
+// popup「本站翻译 = 自动翻译」维护 alwaysTranslateSites 白名单；这些站点的
+// 新页面加载完成后，后台确保服务与模型就绪，再向内容脚本发自动整页翻译。
+// ---------------------------------------------------------------------------
+
+const AUTO_SEND_RETRY_MAX = 5;       // 等内容脚本（document_idle）注入完成的重试次数
+const AUTO_SEND_RETRY_MS = 600;
+const AUTO_MODEL_TIMEOUT_MS = 90_000; // 模型冷启动等待上限（约 10–20 秒的 4 倍余量）
+const autoPendingTabs = new Set();    // 同一标签页去重：SPA 导航会多次触发 complete
+
+function matchesSiteList(hostname, list) {
+    return (list || []).some(d => hostname.includes(d));
+}
+
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+    if (info.status !== 'complete') return;
+    const url = tab && tab.url;
+    if (!url || !/^https?:/i.test(url)) return;
+
+    chrome.storage.sync.get(DEFAULT_CONFIG, (config) => {
+        if (!config.enabled) return;
+        let hostname;
+        try {
+            hostname = new URL(url).hostname;
+        } catch (e) {
+            return;
+        }
+
+        // 黑名单优先；只有明确加入「自动翻译」白名单的站点才触发
+        if (matchesSiteList(hostname, config.blacklist)) return;
+        if (!matchesSiteList(hostname, config.alwaysTranslateSites)) return;
+
+        autoTranslateTab(tabId, config);
+    });
+});
+
+/**
+ * 确保服务与模型就绪后，向标签页发自动整页翻译指令。
+ * 服务未运行时先经 Native Messaging 拉起（宿主内部已等待端口就绪），
+ * 模型加载中轮询 /health，最后等内容脚本注入完成再发消息。
+ */
+async function autoTranslateTab(tabId, config) {
+    if (autoPendingTabs.has(tabId)) return;
+    autoPendingTabs.add(tabId);
+
+    try {
+        let st = await serviceStatus();
+        if (!st.ok || !st.running) {
+            st = await nativeCall({ action: 'start' });
+            if (!st || !st.ok) return;
+            applyIdleExitPolicy();
+        }
+
+        // 等模型就绪：/health 返回 loading 表示端口已起但模型仍在加载
+        const base = String(config.serverUrl).replace(/\/+$/, '');
+        const deadline = Date.now() + AUTO_MODEL_TIMEOUT_MS;
+        let ready = false;
+        while (Date.now() < deadline) {
+            try {
+                const resp = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2000) });
+                const data = await resp.json();
+                if (data.status === 'ok') { ready = true; break; }
+            } catch (e) { /* 端口未就绪，继续等 */ }
+            await new Promise(r => setTimeout(r, 1500));
+        }
+        if (!ready) return;
+
+        for (let i = 0; i < AUTO_SEND_RETRY_MAX; i++) {
+            try {
+                const resp = await chrome.tabs.sendMessage(
+                    tabId, { action: 'autoTranslatePage', enabled: true }
+                );
+                if (resp && resp.ok) return;
+            } catch (e) { /* 内容脚本尚未注入 */ }
+            await new Promise(r => setTimeout(r, AUTO_SEND_RETRY_MS));
+        }
+    } finally {
+        autoPendingTabs.delete(tabId);
+    }
 }
 
 function handleTranslateRequest(request, sendResponse) {

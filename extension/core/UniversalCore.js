@@ -84,6 +84,9 @@ class UniversalCore {
         // 手动整页翻译状态（popup「翻译本页」按钮触发）
         this.pageTranslateOn = false;
         this.pageItems = [];
+        // 与 pageItems 平行的原文节点列表：replace（仅显示译文）模式下
+        // 需要隐藏/恢复这些原文节点
+        this.pageSources = [];
 
         console.log('HY-MT: Universal Core Initializing...');
         this.init();
@@ -124,9 +127,17 @@ class UniversalCore {
     listenForConfigUpdates() {
         chrome.runtime.onMessage.addListener((request) => {
             if (request.action === 'configUpdated') {
+                const prevMode = this.config.displayMode || 'append';
                 this.config = { ...this.config, ...request.config };
                 console.log('HY-MT: Config Updated', this.config);
                 this.updateGlobalStyles();
+
+                // 整页翻译进行中切换「原文 + 译文 / 仅显示译文」时，已出现的
+                // 译文块同步跟随新模式，不用恢复原文再重翻
+                const newMode = this.config.displayMode || 'append';
+                if (this.pageTranslateOn && newMode !== prevMode) {
+                    this.applyDisplayMode(newMode);
+                }
 
                 // Notify adapter if needed
                 if (this.activeAdapter && this.activeAdapter.onConfigUpdate) {
@@ -176,15 +187,21 @@ class UniversalCore {
 
     /**
      * 开始整页翻译：每个待翻段落先插入转圈 loading，译文返回后原位替换。
+     * displayMode='replace'（仅显示译文）时原文段落同时隐藏，译文即唯一内容；
+     * 'append'（默认）时原文保留，译文插入其下方。
      * @param {boolean} force  手动触发时 true（不走 enabled 总开关检查）；
      *                         开关联动时 false（黑名单页 / 关闭状态不翻）
      */
     async startPageTranslate(force = false) {
-        if (!force && !this.config.enabled) {
-            console.log('HY-MT: 翻译未启用，跳过自动整页翻译');
+        // 自动路径（force=false）守卫两道：总开关 + 站点黑名单。
+        // 黑名单站（如本站翻译=不翻译）即使总开关开着也不自动翻；
+        // 手动「翻译本页」按钮（force=true）不受限，用户主动点就是明确意图。
+        if (!force && (!this.config.enabled || this.isBlacklisted())) {
+            console.log('HY-MT: 翻译未启用或站点在黑名单，跳过自动整页翻译');
             return { ok: true, active: false, count: 0 };
         }
 
+        const mode = this.config.displayMode || 'append';
         const nodes = this.sortByViewport(this.collectPageTextNodes());
         let queued = 0;
 
@@ -202,6 +219,10 @@ class UniversalCore {
                 // 纯数字/标点（序号、计数、留白）没有翻译价值，翻出来只是噪音
                 if (!/[a-zA-Z一-鿿]/.test(text)) continue;
                 if (this.isSameLanguage(text, this.config.targetLanguage)) continue;
+
+                // 记录原文节点（无论模式）：模式切换 / 恢复原文时按列表统一处理
+                this.pageSources.push(node);
+                if (mode === 'replace') this.hideSourceNode(node);
 
                 // 在译文将出现的位置先放转圈提示，译文到了再替换
                 // 注意：用 DOM 方法而不是 innerHTML，因为 Google News 等站点启用了
@@ -225,8 +246,16 @@ class UniversalCore {
                         // 翻译被停止（恢复原文）后到达的响应不再插入译文
                         if (!this.pageTranslateOn) return;
                         const tr = resp && resp.success ? resp.translation : null;
-                        if (!tr) return;
-                        if (typeof PROMPT_ECHO_RE !== 'undefined' && PROMPT_ECHO_RE.test(tr)) return;
+                        // 失败 / 回显废译文不插入：replace 模式下把原文放回来，
+                        // 避免留下一段「凭空消失」的内容
+                        if (!tr) {
+                            if (mode === 'replace') this.showSourceNode(node);
+                            return;
+                        }
+                        if (typeof PROMPT_ECHO_RE !== 'undefined' && PROMPT_ECHO_RE.test(tr)) {
+                            if (mode === 'replace') this.showSourceNode(node);
+                            return;
+                        }
                         if (!node.parentNode) return;
                         const div = document.createElement('div');
                         div.className = 'hy-mt-page-item';
@@ -390,9 +419,40 @@ class UniversalCore {
         document.querySelectorAll('.hy-mt-page-item').forEach(el => el.remove());
         // 清掉转圈占位；进行中的翻译回调到达后由 pageTranslateOn 守卫阻止插入
         document.querySelectorAll('.hy-mt-page-loading').forEach(el => el.remove());
+        // 恢复 replace 模式下被隐藏的原文；兜底扫一遍标记属性，
+        // 覆盖 SPA 刷新后 pageSources 引用失联的节点
+        this.pageSources.forEach(node => this.showSourceNode(node));
+        document.querySelectorAll('[data-hy-mt-hidden]').forEach(el => this.showSourceNode(el));
         this.pageItems = [];
+        this.pageSources = [];
         this.pageTranslateOn = false;
         console.log('HY-MT: 已恢复原文');
+    }
+
+    // --- 整页翻译的显示模式 ---
+
+    hideSourceNode(node) {
+        if (!node || node.nodeType !== 1) return;
+        node.setAttribute('data-hy-mt-hidden', 'true');
+        node.style.setProperty('display', 'none', 'important');
+    }
+
+    showSourceNode(node) {
+        if (!node || node.nodeType !== 1) return;
+        node.removeAttribute('data-hy-mt-hidden');
+        node.style.removeProperty('display');
+    }
+
+    /**
+     * 把已提交翻译的原文段落统一切到目标显示模式。
+     * 翻译进行中用户在 popup 切换「原文 + 译文 / 仅显示译文」时调用，
+     * 已出现的译文块无需重翻。
+     */
+    applyDisplayMode(mode) {
+        this.pageSources.forEach(node => {
+            if (mode === 'replace') this.hideSourceNode(node);
+            else this.showSourceNode(node);
+        });
     }
 
     // --- Translation API ---

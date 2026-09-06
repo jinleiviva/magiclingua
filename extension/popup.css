@@ -889,3 +889,23 @@ button, input, select { font-family: inherit; }
 }
 .color-chip input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; }
 .color-chip input[type=color]::-webkit-color-swatch { border-radius: 5px; border: 1px solid var(--line); }
+
+/* 本站翻译三态选择（自动翻译 / 点按钮翻 / 不翻译），替换原 switch，
+   复用 .chip 的 surface 质感但做成独立小控件，贴合 site-head 的 28px 行高 */
+.site-mode {
+  margin-left: auto;
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 4px 0 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+}
+.site-mode:hover { background: var(--surface-3, var(--surface-2)); }
+.site-mode option { color: #1c1c1e; background: #fff; }
