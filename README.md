@@ -1,5 +1,7 @@
 <div align="center">
 
+**简体中文** | [English](README_EN.md)
+
 # 🚂 MagicLingua
 
 **一个完全跑在你电脑上的翻译助手** — 翻网页 · 翻视频字幕 · 翻 PDF / EPUB / TXT 文档
@@ -32,13 +34,9 @@
 
 ---
 
-## English Summary
+## English
 
-MagicLingua is a browser translation assistant that runs **entirely on your own machine**: full-page web translation, YouTube bilingual subtitles, and PDF / EPUB / TXT document translation. No account, no cloud, no cost — your content never leaves your computer. Free and open source (MIT) forever.
-
-Quick start: download the repo and run `./install.command` (one-click: venv + engine + model from ModelScope + auto-launch), or run `./setup_env.sh` / `./download_model.sh` / `./start_server_gguf.sh` manually — then load the `extension/` folder via `chrome://extensions` (Developer Mode). The Chinese docs below cover everything else; English issues and PRs are welcome.
-
-> The bundled translation model is licensed under the *Tencent HY Community License Agreement*, which **does not apply to the EU, UK, or South Korea** — see [`MODEL_LICENSE.txt`](MODEL_LICENSE.txt).
+For the full English documentation, see **[README_EN.md](README_EN.md)**.
 
 ---
 
