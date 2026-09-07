@@ -1,334 +1,417 @@
 <div align="center">
 
-**简体中文** | [English](README_EN.md)
+**English** | [简体中文](README_ZH.md)
 
 # 🚂 MagicLingua
 
-**一个完全跑在你电脑上的翻译助手** — 翻网页 · 翻视频字幕 · 翻 PDF / EPUB / TXT 文档
+**Local-first AI translation infrastructure** — a translation runtime that runs entirely on your own machine, served over an OpenAI-compatible local API.
 
-不用账号 · 不上传内容 · 永久免费 · 开源
+Ship it with a browser client and a document pipeline — or skip both and call the API from your own tools.
+
+No account · Nothing uploaded · Free forever · Open source
 
 [![CI](https://github.com/jinleiviva/magiclingua/actions/workflows/ci.yml/badge.svg)](https://github.com/jinleiviva/magiclingua/actions/workflows/ci.yml)
 [![version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/jinleiviva/magiclingua/releases)
 [![license](https://img.shields.io/badge/code%20license-MIT-green)](LICENSE)
-[![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](README.md)
-[![price](https://img.shields.io/badge/%E4%BB%B7%E6%A0%BC-%E6%B0%B8%E4%B9%85%E5%85%8D%E8%B4%B9-brightgreen)](LICENSE)
+[![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#getting-started)
+[![price](https://img.shields.io/badge/price-free%20forever-brightgreen)](LICENSE)
 
 </div>
 
-> ⚠️ **使用地区**：翻译模型采用腾讯 HY 社区许可协议，**不适用于欧盟、英国、韩国**，请勿在上述地区使用或分发。许可全文见 [`MODEL_LICENSE.txt`](MODEL_LICENSE.txt)。
+> ⚠️ **Regions of use**: The bundled translation model is licensed under the Tencent HY Community License Agreement, which **does not apply to the European Union, the United Kingdom, or South Korea**. Please do not use or distribute it in those regions. Full license text: [`MODEL_LICENSE.txt`](MODEL_LICENSE.txt).
 
 ---
 
-## 目录
+## Table of Contents
 
-- [这是什么](#这是什么)
-- [它能做什么](#它能做什么)
-- [效果一览](#效果一览)
-- [怎么开始用](#怎么开始用)
-- [日常怎么用](#日常怎么用)
-- [常见问题](#常见问题)
-- [给开发者](#给开发者)
-- [参与贡献](#参与贡献)
-- [致谢与许可证](#致谢与许可证)
-
----
-
-## English
-
-For the full English documentation, see **[README_EN.md](README_EN.md)**.
+- [What is this](#what-is-this)
+- [Architecture](#architecture)
+- [Use it without the extension — the local API](#use-it-without-the-extension--the-local-api)
+- [What the clients do](#what-the-clients-do)
+- [Screenshots](#screenshots)
+- [Getting started](#getting-started)
+- [Daily usage](#daily-usage)
+- [FAQ](#faq)
+- [For developers](#for-developers)
+- [Contributing](#contributing)
+- [Acknowledgements & License](#acknowledgements--license)
 
 ---
 
-## 这是什么
+## What is this
 
-MagicLingua 是一个浏览器翻译插件，帮你轻松看懂英文网页、视频和文档。
+MagicLingua is **local-first translation infrastructure**. At its core sits a small local server — the **Local Translation Runtime** — that loads a translation model (Tencent HY-MT2) on your own machine and exposes it through an **OpenAI-compatible API** on `localhost:18770`.
 
-和常见的在线翻译不一样，它**完全运行在你自己的电脑上**：
+Everything else in this repo is a client built on top of that runtime:
 
-- 🔒 **隐私安全** — 翻译在本地完成，你浏览的内容、上传的文档**不会离开你的电脑**
-- 💰 **永久免费** — 不注册、不订阅、无广告，开源可自用
-- 🌍 **38 种语言互译** — 中 / 英 / 日 / 韩 / 法 / 德 / 西 / 俄 / 阿 / 葡 等
-- 💻 **普通电脑就能跑** — 翻译模型约 1.1 GB，近五年内的电脑（有没有独立显卡都行）都能跑
+- 🌐 **A browser client** (Chrome extension) — full-page web translation, selection & hover translation, bilingual YouTube subtitles
+- 📄 **A document pipeline** — layout-preserving PDF translation (via BabelDOC), plus EPUB / TXT / SRT / ASS with bilingual output
+- 🔌 **Any OpenAI-SDK app** — point it at `http://localhost:18770/v1` and it just works
 
-**我为什么做它**：我每天要读大量英文内容，后来发现商用的翻译效果已经能在自己电脑上免费跑出来，就想——既然我自己能用上，为什么不把它开源给更多人？于是有了这个插件。我一个人能覆盖的场景有限，欢迎一起来完善它。
+Because the runtime speaks the OpenAI chat-completions protocol, third-party tools don't need to know (or care) that a 1.8B GGUF model is behind it. In fact, BabelDOC already consumes this exact endpoint as its translation backend — the API isn't an afterthought, it's the seam the project is built around.
+
+Unlike typical cloud translation services, everything runs on your own computer:
+
+- 🔒 **Private by design** — Translation happens locally. The pages you browse, the documents you upload, and every API call **never leave your computer**
+- 💰 **Free forever** — No sign-up, no subscription, no ads, no usage meter. Open source (MIT for the code)
+- 🌍 **38 languages** — Chinese / English / Japanese / Korean / French / German / Spanish / Russian / Arabic / Portuguese and more
+- 💻 **Runs on ordinary hardware** — The translation model is about 1.1 GB; any computer from the last five years (dedicated GPU or not) can run it. Apple Silicon gets Metal acceleration out of the box
+
+**Why I built it**: I read a lot of English content every day, and at some point I realized that commercial-grade translation quality had become something my own computer could run for free. So I built the runtime first, then the clients I personally needed. The Chrome extension is just the first client — the runtime is meant to be reused by anything you want to plug into it.
 
 ---
 
-## 它能做什么
+## Architecture
 
-| 你想做的事 | 怎么办 |
+```
+                          MagicLingua
+                               │
+                  Local Translation Runtime
+                 (HY-MT2 · llama.cpp · your machine)
+                               │
+                   OpenAI-compatible local API
+                http://localhost:18770/v1/...
+                               │
+        ┌──────────────────────┼──────────────────────┐
+        ▼                      ▼                      ▼
+   Browser client        Document pipeline      Your own tools
+   (Chrome extension)    (PDF / EPUB /          (OpenAI SDK,
+        │                 TXT / SRT / ASS)      scripts, apps)
+        ▼
+  Web pages · YouTube
+  Selection & hover
+```
+
+One runtime, many clients. The browser extension can start and stop the runtime with one click (via native messaging), the document pipeline shares the same model instance, and anything that speaks the OpenAI protocol can join without asking permission.
+
+---
+
+## Use it without the extension — the local API
+
+You don't need the Chrome extension at all. Once the local service is running (see [Getting started](#getting-started)), the runtime exposes a standard OpenAI-compatible API:
+
+**Check the runtime is up:**
+
+```bash
+curl http://localhost:18770/health
+```
+
+**OpenAI-compatible endpoint** — works with the OpenAI SDK, LangChain, or any tool that accepts a custom `base_url`:
+
+```bash
+curl http://localhost:18770/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "system", "content": "Translate the following text into French."},
+      {"role": "user", "content": "Good morning! The meeting starts at nine."}
+    ],
+    "stream": false
+  }'
+```
+
+**Or with the OpenAI Python SDK:**
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:18770/v1", api_key="local")
+
+resp = client.chat.completions.create(
+    model="magiclingua",  # model name is ignored; the runtime loads its own model
+    messages=[{"role": "user", "content": "Translate into Japanese: Hello, world."}],
+)
+print(resp.choices[0].message.content)
+```
+
+**Structured translation endpoint** — if you'd rather not manage prompts yourself, `/v1/translate` takes raw text and the server builds the translation prompt (glossary support, context passing, SSE streaming):
+
+```bash
+curl http://localhost:18770/v1/translate \
+  -H "Content-Type: application/json" \
+  -d '{"text": "A stitch in time saves nine.", "target_lang": "zh"}'
+```
+
+Other endpoints: `/v1/models` (model listing), `/v1/translate/batch`, and the document job endpoints under `/v1/pdf/*` that power the web UI. The API is unauthenticated and binds to localhost only — it is meant for local use, not for serving other machines.
+
+---
+
+## What the clients do
+
+| What you want | How |
 | --- | --- |
-| 看英文网页 | 打开网页 → 点插件图标 → 打开「启用翻译」。整页内容就地变成中文，排版不乱；再点一下开关就恢复原文 |
-| 读一段英文 | 选中文字，点旁边的「译」小按钮 / 右键菜单 / 按 `Alt+T`，译文马上显示 |
-| 看 YouTube 视频 | 播放器里打开字幕（CC），插件自动出中文，原字幕和译文同屏对照 |
-| 看 B 站 / Netflix 等视频 | 打开视频原字幕，插件自动跟着翻译（这几个站点属实验支持） |
-| 翻译 PDF 文章 | 浏览器打开 `http://localhost:18770/pdf`，上传 PDF，勾选想看的文章，翻译后下载成品，排版和图片原样保留 |
-| 翻译电子书 / 文稿 / 字幕文件 | 同一个页面，选类型（EPUB / TXT / SRT / ASS），拖入文件，翻译完下载，默认双语对照 |
-| 让专业术语翻得准 | 内置金融 / 科技 / 商业词库（勾选即生效），也可以自己添加术语，全文译法保持一致 |
-| 调整译文样子 | 设置里改字幕底色和文字颜色，有 4 组现成配色一键切换 |
+| Read an English web page | Open the page → click the extension icon → toggle **Enable Translation**. The whole page is translated in place, layout intact; toggle again to restore the original |
+| Read a paragraph | Select the text, click the blue "Translate" button that appears / use the right-click menu / press `Alt+T` — the translation shows up instantly |
+| Watch YouTube videos | Turn on captions (CC) in the player; the extension shows the original and the translation side by side |
+| Watch Bilibili / Netflix etc. | Turn on the video's original captions; the extension translates along as they change (these sites are experimental support) |
+| Translate a PDF article | Open `http://localhost:18770/pdf` in your browser, upload the PDF, pick the articles you want, translate and download — layout and images preserved |
+| Translate e-books / text files / subtitle files | Same page: pick the file type (EPUB / TXT / SRT / ASS), drop the file in, download when done. Bilingual output by default |
+| Get domain terms right | Built-in glossaries for finance / tech / business (just tick to enable), or add your own terms — consistent wording across the whole document |
+| Adjust how translations look | In settings, change subtitle background and text color; 4 ready-made color themes with one click |
 
 ---
 
-## 效果一览
+## Screenshots
 
 <table>
   <tr>
     <td width="50%" align="center">
       <a href="docs/screenshot-web.png">
-        <img src="docs/screenshot-web.png" width="340" alt="网页整页翻译">
+        <img src="docs/screenshot-web.png" width="340" alt="Full-page web translation">
       </a>
       <br>
-      <sub>🌍 网页整页翻译 · Google News 就地替换，版式不乱</sub>
+      <sub>🌍 Full-page translation · Google News replaced in place, layout intact</sub>
     </td>
     <td width="50%" align="center">
       <a href="docs/screenshot-youtube.jpg">
-        <img src="docs/screenshot-youtube.jpg" width="340" alt="YouTube 双语字幕">
+        <img src="docs/screenshot-youtube.jpg" width="340" alt="YouTube bilingual subtitles">
       </a>
       <br>
-      <sub>🎬 YouTube 双语字幕 · 原字幕与译文同屏对照</sub>
+      <sub>🎬 YouTube bilingual subtitles · original and translation side by side</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
       <a href="docs/screenshot-pdf.png">
-        <img src="docs/screenshot-pdf.png" width="300" alt="PDF 翻译助手">
+        <img src="docs/screenshot-pdf.png" width="300" alt="PDF translation assistant">
       </a>
       <br>
-      <sub>📄 PDF 翻译助手 · 自动解析目录，勾选要翻的文章</sub>
+      <sub>📄 PDF translation assistant · table of contents parsed automatically</sub>
     </td>
     <td width="50%" align="center">
       <a href="docs/screenshot-pdf-result.png">
-        <img src="docs/screenshot-pdf-result.png" width="300" alt="PDF 翻译成品">
+        <img src="docs/screenshot-pdf-result.png" width="300" alt="PDF translation result">
       </a>
       <br>
-      <sub>📑 PDF 翻译成品 · 排版、配图、分栏原样保留</sub>
+      <sub>📑 PDF translation result · layout, images, and columns preserved</sub>
     </td>
   </tr>
 </table>
 
 <p align="center">
-  <sub>⚙️ 插件面板：启用翻译开关 + 本地服务一键启停（点图标看大图）</sub>
+  <sub>⚙️ Extension popup: translation toggle + one-click local server start/stop (click for full size)</sub>
 </p>
 <p align="center">
   <a href="docs/screenshot-popup.png">
-    <img src="docs/screenshot-popup.png" width="220" alt="插件面板">
+    <img src="docs/screenshot-popup.png" width="220" alt="Extension popup">
   </a>
 </p>
 
 ---
 
-## 怎么开始用
+## Getting started
 
-一共两步：**装本地翻译服务（一键）→ 装扩展**。
+Two steps: **install the local translation runtime (one click) → install the browser client**. Step 1 alone is enough if you only want the API.
 
-> 需要：**macOS（Apple Silicon）**、内存 4 GB+、磁盘约 3 GB。不需要 GPU。
-> Windows / Linux 见文末「给开发者」；Intel Mac 会自动回退源码编译（耗时较长）。
+> Requirements: **macOS (Apple Silicon)**, 4 GB+ RAM, about 3 GB of disk space. No GPU needed.
+> See [For developers](#for-developers) at the end for Windows / Linux. Intel Macs automatically fall back to building from source (takes longer).
 
-### 第 1 步：装本地翻译服务（一次，约几分钟）
+### Step 1: Install the local translation runtime (once, a few minutes)
 
-**macOS 用户推荐双击**（终端都省了）：
+**macOS — recommended: double-click** (no terminal needed):
 
 ```
-下载仓库 → 双击 install.command
+Download the repo → double-click install.command
 ```
 
-或者打开终端（更稳妥，能看到进度）：
+Or open a terminal (more reliable, shows progress):
 
 ```bash
 git clone https://github.com/jinleiviva/magiclingua.git && cd magiclingua
 ./install.command
 ```
 
-脚本会**自动完成全部安装**：
+The script **does everything automatically**:
 
-1. 创建 Python 虚拟环境
-2. 安装翻译引擎——Apple Silicon 自动用官方预编译 wheel（**免源码编译**，老的 7 分钟编译已不需要）
-3. 从**魔搭社区**下载翻译模型（约 1.1 GB，国内直连快，带进度条，断点续传）
-4. 注册开机自启（launchd）+ 浏览器原生宿主（装完扩展就能一键启停服务）
+1. Creates a Python virtual environment
+2. Installs the translation engine — on Apple Silicon it uses the official prebuilt wheel (**no compiling from source**; the old 7-minute build is no longer needed)
+3. Downloads the translation model from **ModelScope** (about 1.1 GB, fast direct connection in China, with progress bar and resume support)
+4. Registers auto-start on login (launchd) + the browser native host (so the extension popup can start/stop the service with one click)
 
-看到 `MagicLingua 安装完成` 就是装好了。**装完先完全退出 Chrome（Cmd+Q）再重开**。
+When you see `MagicLingua 安装完成` (installation complete), you're done. Verify with `curl http://localhost:18770/health`. **If you're installing the extension too, fully quit Chrome (Cmd+Q) and reopen it.**
 
-> 手动分步装（不用一键脚本）：
+> Manual step-by-step install (without the one-click script):
 > ```bash
-> ./setup_env.sh          # 环境 + 引擎 + 依赖
-> ./download_model.sh     # 下载模型（约 1.1 GB）
-> ./start_server_gguf.sh  # 启动服务
+> ./setup_env.sh          # environment + engine + dependencies
+> ./download_model.sh     # download the model (about 1.1 GB)
+> ./start_server_gguf.sh  # start the service
 > ```
 
-### 第 2 步：装浏览器扩展（一次）
+### Step 2: Install the browser extension (once)
 
-1. Chrome 打开 `chrome://extensions`
-2. 打开右上角的「**开发者模式**」
-3. 点「**加载已解压的扩展程序**」，选择仓库里的 `extension` 文件夹
+1. Open `chrome://extensions` in Chrome
+2. Turn on **Developer mode** in the top-right corner
+3. Click **Load unpacked** and select the `extension` folder in the repo
 
-装好后，浏览器右上角会出现插件图标。点开确认能看到面板，就装好了。
+Once installed, the extension icon appears in your browser toolbar. Click it — if you can see the popup panel, you're set.
 
-> 第 1 步已注册原生宿主，所以装完扩展**重启 Chrome** 后，点插件里的「启动 / 停止」就能控制服务，不用再碰终端。
+> Step 1 registered the native host, so after **restarting Chrome**, the Start / Stop buttons in the popup control the service — no terminal needed.
 
 <details>
-<summary>更多说明（Windows / Linux、扩展 ID 变了怎么办）</summary>
+<summary>More notes (Windows / Linux, what if the extension ID changes)</summary>
 
-- **Windows / Linux 一键启停**：目前没有安装脚本，需要手动注册（详见 `native_host/com.magiclingua.host.json` 里的说明），不注册不影响翻译功能本身。
-- **扩展 ID 变了**：扩展 ID 由 `extension` 文件夹的位置决定，只要不移动 / 改名就不会变。万一变了，重跑一次 `./native_host/install.command` 即可自动适配。
-- **服务端口被占用**：默认端口 18770。被占时用 `lsof -i :18770` 找到占用进程结束它，或设置环境变量 `HYMT_PORT` 换端口。
+- **Windows / Linux one-click start/stop**: no install script yet; you need to register the native host manually (see the instructions in `native_host/com.magiclingua.host.json`). Not registering doesn't affect translation itself.
+- **Extension ID changed**: the extension ID is derived from the location of the `extension` folder — as long as you don't move or rename it, it stays the same. If it ever changes, just re-run `./native_host/install.command` to re-register automatically.
+- **Port already in use**: the default port is 18770. If it's taken, find and kill the process with `lsof -i :18770`, or set the `HYMT_PORT` environment variable to switch ports.
 
 </details>
 
 ---
 
-## 日常怎么用
+## Daily usage
 
-### 翻网页
+### Translating web pages
 
-点插件图标 → 打开「**启用翻译**」。当前网页马上开始翻译：每个译文出现前先显示一个转圈提示，翻译好了就原地替换成中文。想恢复原文，再点一下开关，所有译文消失。
+Click the extension icon → toggle **Enable Translation**. The current page starts translating right away: each translation shows a spinner first, then replaces the original text in place. Toggle the switch again and all translations disappear, restoring the original page.
 
-**让常逛的网站自动翻译**：插件里的「本站翻译」选「**自动翻译**」，以后打开这个站的新页面会自动开始整页翻译，不用再点任何按钮（不想翻了随时切回「点按钮翻」或「不翻译」）。
+**Auto-translate sites you visit often**: in the popup, set "This site" to **Auto-translate**. From then on, every new page on that site is translated automatically — no buttons needed (switch back to "Translate on click" or "Don't translate" anytime).
 
-翻过一次的网页再次打开，译文是秒出的（本地缓存）。
+Pages you've translated before load instantly when reopened (local cache).
 
-### 翻一段文字
+### Translating a piece of text
 
-- **划词**：选中一段英文，点选区旁出现的蓝色「译」按钮，或右键菜单选「翻译选中内容」，或按快捷键 `Alt+T`（快捷键可在浏览器扩展快捷键设置里改）
-- **悬停**：按住 `Ctrl` 把鼠标停在段落上，译文就地出现；移开鼠标或松开按键，译文消失（不喜欢 Ctrl，可在设置里换成 `Alt`）
+- **Selection**: select some text, click the blue "Translate" button next to the selection, or choose "Translate selection" from the right-click menu, or press `Alt+T` (the shortcut can be changed in your browser's extension shortcut settings)
+- **Hover**: hold `Ctrl` and rest the mouse on a paragraph — the translation appears in place; move the mouse away or release the key and it disappears (don't like `Ctrl`? Switch to `Alt` in settings)
 
-### 看视频
+### Watching videos
 
-- **YouTube**：播放器里打开字幕（CC），插件会自动提前翻好，原字幕和译文同屏对照
-- **B 站 / Netflix / Coursera / Udemy**（实验支持）：同样打开视频原字幕，字幕一变译文就跟着变
-- **导出字幕**：在视频页点插件里的「导出字幕」，得到一个 `.srt` 字幕文件，可以直接拖进剪映等软件
+- **YouTube**: turn on captions (CC) in the player; the extension translates ahead of time and shows the original and translation side by side
+- **Bilibili / Netflix / Coursera / Udemy** (experimental): turn on the video's original captions the same way; as captions change, the translation follows
+- **Export subtitles**: on a video page, click "Export subtitles" in the popup to get an `.srt` file you can drop straight into CapCut and similar tools
 
-### 翻文档和电子书
+### Translating documents and e-books
 
-浏览器打开 **`http://localhost:18770/pdf`**（服务运行时才能访问）：
+Open **`http://localhost:18770/pdf`** in your browser (available while the service is running):
 
-- **PDF**：上传后自动列出文章目录 → 勾选想翻的文章 → 开始翻译 → 下载成品。只翻你勾选的页，扫描版 PDF 也能翻（自动识别文字）。如果目录识别不准，可以手动填页码（如 `1,3-5`）
-- **EPUB / TXT / 字幕文件**：选好文件类型拖进去 → 翻译完直接下载。默认是**双语对照**（原文 + 译文），也可以切换成只输出译文；长文档会自动分段翻译，个别段落失败不影响整篇
+- **PDF**: upload and the table of contents is listed automatically → tick the articles you want → translate → download. Only the pages you ticked are translated; scanned PDFs work too (text recognized automatically). If the table of contents is detected incorrectly, you can enter page ranges manually (e.g. `1,3-5`)
+- **EPUB / TXT / subtitle files**: pick the file type, drop the file in → download when done. Output is **bilingual** (original + translation) by default; you can switch to translation-only. Long documents are translated in segments, and a failed segment doesn't affect the rest
 
-### 设置里能调什么
+### What's in Settings
 
-点插件图标 → 右上角 **⚙️**：
+Click the extension icon → **⚙️** in the top-right corner:
 
-| 设置项 | 作用 |
+| Setting | What it does |
 | --- | --- |
-| 本站翻译 | 当前站点三选一：**自动翻译**（打开新页面自动翻）/ **点按钮翻** / **不翻译** |
-| 空闲策略 | **省电**（默认，空闲 20 分钟自动释放模型内存）或**常驻**（模型一直驻留，翻译秒出） |
-| 译文样式 | 字幕底色 / 文字颜色，4 组现成配色，网页译文颜色跟随 |
-| 术语表 | 勾选内置词库（金融 / 科技 / 商业），或添加自己的术语；支持从表格文件（CSV）批量导入导出 |
-| 悬停触发键 | `Ctrl` 或 `Alt` 二选一 |
-| 目标语言 / 显示模式 | 翻成什么语言、双语还是仅译文 |
+| This site | Three options for the current site: **Auto-translate** (new pages translate automatically) / **Translate on click** / **Don't translate** |
+| Idle strategy | **Power saving** (default; releases model memory after 20 min idle) or **Stay resident** (model stays loaded, translations are instant) |
+| Translation style | Subtitle background / text color; 4 ready-made themes; web-page translations follow the color |
+| Glossary | Tick built-in glossaries (finance / tech / business) or add your own terms; batch import/export via CSV |
+| Hover trigger key | `Ctrl` or `Alt` |
+| Target language / display mode | Which language to translate into; bilingual or translation-only |
 
 ---
 
-## 常见问题
+## FAQ
 
-- **服务起不来？** 依次检查：模型下了没（`ls models/*.gguf`）、依赖装了没（`venv/bin/python -m pip list | grep llama-cpp`）、端口被占没（`lsof -i :18770`），然后看日志 `tail -f log_server.txt` 找原因。
-- **提示找不到模型？** 跑一次 `./download_model.sh`；或自己指定路径：`export HYMT_MODEL_PATH=/你的/模型路径.gguf`。
-- **翻译速度慢？** 首次翻译要加载模型会慢一点（10–20 秒），之后就快了；翻译过的内容有缓存，再翻是秒出。换更大或更小的模型可以调节质量与速度（见「给开发者」）。
-- **我的电脑能跑吗？** 近五年的 Mac / Windows / Linux 都可以。有 NVIDIA 显卡更快，没有显卡纯 CPU 也能跑。手机和纯浏览器环境不支持。
-- **翻译质量一般？** 1.8B 模型体积小、速度快，质量已接近商用服务；想要更好效果，可以换更大的模型（7B），速度会相应变慢。
-- **为什么不支持某网站？** 网页翻译是通用的，绝大多数网站开「启用翻译」即可；少数特殊站点（视频站、特殊排版）需要针对性适配，欢迎反馈你常逛的站点。
+- **Service won't start?** Check in order: is the model downloaded (`ls models/*.gguf`), are the dependencies installed (`venv/bin/python -m pip list | grep llama-cpp`), is the port taken (`lsof -i :18770`), then check the log `tail -f log_server.txt` for the cause.
+- **"Model not found"?** Run `./download_model.sh` once; or point to the file yourself: `export HYMT_MODEL_PATH=/your/model/path.gguf`.
+- **Translation is slow?** The first translation loads the model and takes a bit longer (10–20 seconds); after that it's fast. Translated content is cached — repeat translations are instant. Swapping in a larger or smaller model trades quality against speed (see [For developers](#for-developers)).
+- **Will my computer run it?** Any Mac / Windows / Linux machine from the last five years. Faster with an NVIDIA GPU, but pure CPU works fine. Phones and browser-only environments are not supported.
+- **Translation quality is meh?** The 1.8B model is small and fast, with quality close to commercial services; for better results, switch to a larger model (7B) at the cost of speed.
+- **Why isn't some site supported?** Web-page translation is generic — "Enable Translation" works on the vast majority of sites; a few special sites (video sites, unusual layouts) need tailored adapters. Tell us which sites you frequent and we'll see what we can do.
 
 ---
 
-## 给开发者
+## For developers
 
 <details>
-<summary>环境变量与模型配置</summary>
+<summary>Environment variables & model configuration</summary>
 
-| 环境变量 | 默认 | 说明 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `HYMT_PORT` | `18770` | 服务端口 |
-| `HYMT_IDLE_EXIT` | `20` | 空闲多少分钟自动退出，`0` = 常驻 |
-| `HYMT_MODEL_PATH` | 空 | 直接指定模型文件路径（优先于 `models/`） |
-| `MODEL_NAMESPACE` / `MODEL_REPO` / `MODEL_FILE` | Tencent-Hunyuan / Hy-MT2-1.8B-GGUF / Q4_K_M | `download_model.sh` 的下载目标（默认魔搭社区） |
-| `HF_ENDPOINT` | 空 | 设置后切换下载源到 HuggingFace / 镜像（如 `https://huggingface.co`） |
+| `HYMT_PORT` | `18770` | Service port |
+| `HYMT_IDLE_EXIT` | `20` | Minutes of idle before auto-exit; `0` = stay resident |
+| `HYMT_MODEL_PATH` | empty | Explicit path to the model file (takes precedence over `models/`) |
+| `MODEL_NAMESPACE` / `MODEL_REPO` / `MODEL_FILE` | Tencent-Hunyuan / Hy-MT2-1.8B-GGUF / Q4_K_M | Download target for `download_model.sh` (ModelScope by default) |
+| `HF_ENDPOINT` | empty | When set, switches the download source to HuggingFace / a mirror (e.g. `https://huggingface.co`) |
 
-换更大模型（效果更好、速度更慢）——默认走魔搭社区：
+Switch to a larger model (better quality, slower) — ModelScope by default:
 
 ```bash
 MODEL_NAMESPACE=Tencent-Hunyuan MODEL_REPO=Hy-MT2-7B-GGUF MODEL_FILE=Hy-MT2-7B-Q4_K_M.gguf ./download_model.sh
 ```
 
-切回 HuggingFace 官方源：
+Switch back to the official HuggingFace source:
 
 ```bash
 HF_ENDPOINT=https://huggingface.co MODEL_NAMESPACE=tencent MODEL_REPO=Hy-MT2-7B-GGUF MODEL_FILE=Hy-MT2-7B-Q4_K_M.gguf ./download_model.sh
 ```
 
-Apple Silicon 加速：仓库自带的依赖安装已启用 Metal 加速；自行编译时设 `CMAKE_ARGS="-DGGML_METAL=ON"`。
+Apple Silicon acceleration: the bundled dependency install enables Metal; when building yourself, set `CMAKE_ARGS="-DGGML_METAL=ON"`.
 
 </details>
 
 <details>
-<summary>项目结构</summary>
+<summary>Project structure</summary>
 
 ```
 magiclingua/
-├── install.command         # macOS 双击一键安装（普通用户入口）⭐
-├── setup_env.sh            # 一键安装脚本（venv + 引擎 + 模型 + 自启注册）
-├── download_model.sh       # 下载模型到 models/（默认魔搭社区，断点续传）
-├── requirements-core.txt   # 翻译核心依赖（不含 PDF 解析组件）
-├── requirements-pdf.txt    # PDF 翻译依赖（--with-pdf 按需安装）
-├── start_server_gguf.sh    # 手动启动本地翻译服务（开发 / 调试）
-├── server_gguf.py          # 服务主程序（OpenAI 兼容 API + PDF/文档翻译）⭐
-├── ocr_engine.py           # 扫描件 OCR（macOS Vision）
-├── pdf_toc.py              # PDF 目录解析
-├── requirements.txt        # 完整运行依赖（含 PDF，锁版本）
-├── config.example.json     # 配置样例（首次运行自动生成 config.json）
-├── test_api.py             # API 冒烟测试
-├── test_streaming.py       # 流式输出冒烟测试
-├── pack_extension.py       # 打包 CRX（发布用）
-├── ui-preview.html         # popup 样式预览页（开发用）
-├── icons_src/              # 图标源素材
-├── extension/              # Chrome 扩展（开发者模式加载）
-├── native_host/            # 扩展 ↔ 本机服务的 Native Messaging 通道
-├── LICENSE                 # 本项目代码许可证（MIT）
-├── MODEL_LICENSE.txt       # 翻译模型许可证（Tencent HY Community License）
-└── NOTICE                  # 许可与商标披露汇总
+├── install.command         # macOS double-click one-click install (entry point for regular users) ⭐
+├── setup_env.sh            # one-click setup script (venv + engine + model + auto-start registration)
+├── download_model.sh       # download the model into models/ (ModelScope by default, resumable)
+├── requirements-core.txt   # core translation dependencies (no PDF parsing components)
+├── requirements-pdf.txt    # PDF translation dependencies (installed on demand via --with-pdf)
+├── start_server_gguf.sh    # manually start the local translation runtime (dev / debug)
+├── server_gguf.py          # the runtime: OpenAI-compatible API + PDF/document translation ⭐
+├── ocr_engine.py           # OCR for scanned PDFs (macOS Vision)
+├── pdf_toc.py              # PDF table-of-contents parsing
+├── requirements.txt        # full runtime dependencies (incl. PDF, pinned versions)
+├── config.example.json     # sample config (config.json is generated on first run)
+├── test_api.py             # API smoke tests
+├── test_streaming.py       # streaming smoke tests
+├── pack_extension.py       # pack the CRX (for releases)
+├── ui-preview.html         # popup style preview page (dev)
+├── icons_src/              # icon source assets
+├── extension/              # browser client: Chrome extension (load unpacked)
+├── native_host/            # Native Messaging channel between extension and local runtime
+├── LICENSE                 # license for this project's code (MIT)
+├── MODEL_LICENSE.txt       # translation model license (Tencent HY Community License)
+└── NOTICE                  # consolidated license & trademark notices
 ```
 
 </details>
 
 <details>
-<summary>技术说明</summary>
+<summary>Technical notes</summary>
 
-- 扩展分三层：站点配置（`site_registry.js`）→ 适配器（网页 / 视频）→ 通用整页翻译兜底；划词翻译独立实现。
-- 本地服务提供 OpenAI 兼容 API（`http://localhost:18770/v1/chat/completions`），可接入其他工具。
-- 服务空闲 20 分钟自动退出释放内存，下次使用时由扩展一键拉起。
-- 扩展 / 文档翻译的详细设计见 [`docs/`](docs/)（架构规划、竞品对比、功能方案）。
+- The runtime (`server_gguf.py`) is the core: model loading, prompt construction, glossary merging, caching, and the OpenAI-compatible API layer.
+- The browser client has three layers: site configuration (`site_registry.js`) → adapters (web / video) → a generic full-page translation fallback; selection translation is implemented independently.
+- `/v1/chat/completions` exists so that BabelDOC can call this runtime directly as its translation backend — the same seam any other tool can use.
+- The service auto-exits after 20 minutes of idle to free memory; the extension relaunches it with one click when needed.
+- Detailed design docs (architecture planning, competitor analysis, feature proposals) live in [`docs/`](docs/).
 
 </details>
 
 ---
 
-## 参与贡献
+## Contributing
 
-这个项目是我一个人业余时间做的，**一个人的场景有限，一群人的场景才是全部**。特别欢迎这些方向的贡献：
+This project is built by one person in spare time — **one person covers a few use cases; a community covers all of them**. Contributions especially welcome in these areas:
 
-- 🌐 **更多站点适配** — 让你常逛的站点也能翻
-- 📄 **PDF 场景打磨** — 更多版式（双栏论文 / 漫画 / 财报）的翻译效果优化
-- 🎬 **更多视频平台** — B 站、Coursera、Netflix 等字幕翻译适配
-- 🖥️ **平台支持** — Windows / Linux 的一键安装脚本（目前仅 macOS 自动化）
-- 🐛 **问题反馈** — 翻错了、版式乱了、服务起不来，都请来提 Issue
+- 🔌 **Runtime & API** — more client-facing endpoints, better streaming behavior, integration examples for other tools
+- 🌐 **More site adapters** — make the sites you frequent work
+- 📄 **PDF polish** — better translation for more layouts (two-column papers / manga / financial reports)
+- 🎬 **More video platforms** — subtitle translation for Bilibili, Coursera, Netflix, etc.
+- 🖥️ **Platform support** — one-click install scripts for Windows / Linux (currently only macOS is automated)
+- 🐛 **Bug reports** — wrong translations, broken layouts, service won't start — please open an Issue
 
-提交 PR 前请确保 `server_gguf.py` 可通过 `python -m py_compile`、扩展改动在 `chrome://extensions` 实测可用。不会写代码也没关系——把你想让它支持的场景告诉我，同样是宝贵的贡献。
+Before submitting a PR, please make sure `server_gguf.py` passes `python -m py_compile` and that extension changes are verified working in `chrome://extensions`. You don't have to write code — telling me which use case you'd like supported is a valuable contribution too.
 
 ---
 
-## 致谢与许可证
+## Acknowledgements & License
 
-- [Tencent Hunyuan HY-MT](https://github.com/Tencent-Hunyuan/HY-MT) · [Hy-MT2 GGUF](https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF) — 翻译模型
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) / llama-cpp-python — 本地推理引擎
-- [BabelDOC](https://github.com/funstory-ai/BabelDOC) — PDF 版面解析与双语排版
-- [PyMuPDF](https://pymupdf.readthedocs.io/) — PDF 处理；[Flask](https://flask.palletsprojects.com/) — 本地服务
+- [Tencent Hunyuan HY-MT](https://github.com/Tencent-Hunyuan/HY-MT) · [Hy-MT2 GGUF](https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF) — the translation model
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) / llama-cpp-python — local inference engine
+- [BabelDOC](https://github.com/funstory-ai/BabelDOC) — PDF layout analysis & bilingual typesetting
+- [PyMuPDF](https://pymupdf.readthedocs.io/) — PDF processing; [Flask](https://flask.palletsprojects.com/) — local service
 
-> ⚠️ **第三方组件许可证（重要）**：本项目自身代码以 MIT 发布，但运行依赖中包含 **AGPL-3.0** 强 copyleft 组件——[PyMuPDF](https://pymupdf.readthedocs.io/)（PDF 解析）与 [BabelDOC](https://github.com/funstory-ai/BabelDOC)（PDF 双语排版）。AGPL 条款**独立于本项目 MIT 许可**：若你修改这些组件并通过网络提供服务，或对其进行闭源再分发，须遵守 AGPL-3.0（含公开修改版源码的义务）。完整清单与各组件许可证见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
+> ⚠️ **Third-party component licenses (important)**: This project's own code is released under MIT, but its runtime dependencies include **AGPL-3.0** strong-copyleft components — [PyMuPDF](https://pymupdf.readthedocs.io/) (PDF parsing) and [BabelDOC](https://github.com/funstory-ai/BabelDOC) (PDF bilingual typesetting). The AGPL terms are **independent of this project's MIT license**: if you modify these components and serve them over a network, or redistribute them in closed source, you must comply with AGPL-3.0 (including the obligation to publish the source of your modified version). For the full list and each component's license, see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
-- **本项目代码**：[MIT License](LICENSE)
-- **翻译模型**：[Tencent HY Community License Agreement](MODEL_LICENSE.txt) — 商业可用；月活超 1 亿需向腾讯单独申请授权；**不适用于欧盟 / 英国 / 韩国**；再分发须附协议副本与 `NOTICE`；禁止用于改进其他 AI 模型、军事或高风险自动决策等
-- **第三方组件**：含 AGPL-3.0 与多项宽松许可证（MIT / BSD / Apache-2.0），详见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
-- **声明**：MagicLingua 与腾讯及 Hunyuan 团队不存在从属、授权或背书关系
+- **This project's code**: [MIT License](LICENSE)
+- **Translation model**: [Tencent HY Community License Agreement](MODEL_LICENSE.txt) — commercial use allowed; a separate license from Tencent is required above 100 million monthly active users; **does not apply to the EU / UK / South Korea**; redistribution must include a copy of the agreement and `NOTICE`; prohibited from being used to improve other AI models, for military purposes, or in high-risk automated decision-making, among other restrictions
+- **Third-party components**: include AGPL-3.0 and various permissive licenses (MIT / BSD / Apache-2.0) — see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
+- **Disclaimer**: MagicLingua is not affiliated with, endorsed by, or sponsored by Tencent or the Hunyuan team
 
 ---
 
@@ -336,6 +419,6 @@ magiclingua/
 
 **Powered by Tencent Hunyuan HY-MT + llama.cpp** 🚀
 
-<sub>Made for personal use · Given to everyone · 永久免费开源</sub>
+<sub>Made for personal use · Given to everyone · Free & open source forever</sub>
 
 </div>
