@@ -12,7 +12,7 @@ Flask==3.0.0
 llama-cpp-python==0.3.35
 PyMuPDF==1.27.2.2
 opencv-python==4.11.0.86
-numpy==2.3.5
+numpy==2.2.6
 Pillow==12.1.0
 huggingface_hub==0.36.2
 requests==2.32.5

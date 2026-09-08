@@ -30,6 +30,7 @@ from html.parser import HTMLParser
 
 from flask import Flask, Response, jsonify, request, send_file
 from llama_cpp import Llama
+from werkzeug.utils import secure_filename
 
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
@@ -41,10 +42,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# --------------------------------------------------------------------------
+# 安全 / 资源上限常量（必须在 app 创建前定义，app.config 会引用）
+# --------------------------------------------------------------------------
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024   # 上传文件硬上限 200MB，防超大文件占满磁盘/内存
+MAX_CHAT_TOKENS = 8192                  # chat/completions 的 max_tokens 上限，钳制第三方极大值
+JOBS_TTL = 24 * 3600                    # 历史翻译任务（PDF / 文档）保留 24 小时，过期自动清理
+
 app = Flask(__name__)
 # 刻意不使用 flask_cors（默认放行所有来源）：任何网页的 JS 都能直接 POST
 # 本地端口——白嫖推理打满 CPU、调 /shutdown 关服务、传 PDF 占磁盘。
 # 来源白名单见下方 _origin_guard。
+
+# 上传文件硬上限：超限直接 413，不让超大请求读进内存/落盘占满磁盘。
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
+
+
+@app.errorhandler(413)
+def _request_too_large(_err):
+    return jsonify({"error": f"上传文件过大（上限 {MAX_UPLOAD_BYTES // (1024 * 1024)} MB）"}), 413
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
@@ -65,6 +81,50 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "pdf_jobs", "_uploads")
 UPLOADS_FILE = os.path.join(UPLOAD_DIR, "uploads.json")
 TOC_CACHE = {}  # sha256 -> 目录结果，同一个文件重复上传直接命中，不用重解析
 UPLOAD_TTL = 24 * 3600  # 上传件保留 24 小时
+
+
+def _safe_upload_name(filename):
+    """剥离路径分隔符与上级目录跳转，只保留基础文件名，杜绝路径穿越写盘。
+
+    攻击者在 filename 里塞 `../../../etc/passwd` 时，secure_filename 会把
+    `../` 变成 `_.._`、再 basename 兜底，最终只得到 `passwd` 这类纯文件名。
+    """
+    name = secure_filename(filename or "")
+    name = os.path.basename(name)  # 再保险一层：强制取最后一段
+    if not name:
+        name = f"upload_{uuid.uuid4().hex[:8]}"
+    return name
+
+
+def _is_pdf_file(path):
+    """校验文件确为 PDF：扩展名 + 头部 %PDF 魔数，避免 pymupdf.open 时爆 500。"""
+    if not str(path).lower().endswith(".pdf"):
+        return False
+    try:
+        with open(path, "rb") as f:
+            return f.read(5) == b"%PDF-"
+    except Exception:
+        return False
+
+
+def _clamp_max_tokens(v, default=2048):
+    """把客户端传入的 max_tokens 钳制到 [1, MAX_CHAT_TOKENS]，防占满上下文。"""
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(v, MAX_CHAT_TOKENS))
+
+
+def _load_pdf_page():
+    """PDF 翻译页 HTML 抽离到 templates/pdf.html，改样式不必动 Python。"""
+    p = os.path.join(BASE_DIR, "templates", "pdf.html")
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        logger.error(f"加载 PDF 页面模板失败: {e}")
+        return "<h1>PDF 页面模板缺失</h1>"
 
 
 def _sha256_of(path):
@@ -115,6 +175,50 @@ def _uploads_sweep():
         _uploads_save()
     except Exception as e:
         logger.warning(f"清理上传件失败: {e}")
+
+
+def _jobs_sweep():
+    """清理过期的历史翻译任务（PDF / 文档），避免工作目录无限堆积占满磁盘。
+
+    只清 completed/failed 且超过 JOBS_TTL 的任务；正在 processing 的任务不碰，
+    以免误删进行中的翻译。过期但卡在 pending 的也一并回收（视为异常残留）。
+    """
+    now = time.time()
+
+    def _sweep(store, base_dir):
+        removed = 0
+        for k, v in list(store.items()):
+            age = now - v.get("created_at", 0)
+            if age <= JOBS_TTL:
+                continue
+            status = v.get("status")
+            if status == "processing":
+                continue  # 进行中不删
+            wd = v.get("workdir") or (os.path.join(base_dir, k) if base_dir else None)
+            if wd and os.path.isdir(wd):
+                shutil.rmtree(wd, ignore_errors=True)
+            store.pop(k, None)
+            removed += 1
+        return removed
+
+    try:
+        n1 = _sweep(PDF_JOBS, os.path.join(BASE_DIR, "pdf_jobs"))
+        n2 = _sweep(DOC_JOBS, DOC_JOBS_DIR)
+        if n1 or n2:
+            logger.info(f"清理历史任务: PDF {n1} 个 / 文档 {n2} 个")
+            _pdf_jobs_save()
+    except Exception as e:
+        logger.warning(f"清理历史任务失败: {e}")
+
+
+def _jobs_sweep_loop():
+    """每小时跑一次任务清理的后台线程。"""
+    while True:
+        time.sleep(3600)
+        try:
+            _jobs_sweep()
+        except Exception:
+            pass
 
 
 def _pdf_jobs_save():
@@ -351,10 +455,13 @@ def load_gguf_model():
         return False
 
     try:
+        # n_threads=0 让 llama.cpp 自动吃满所有 CPU 核（原硬编码 4 在纯 CPU
+        # 机器上跑不满核）；可用环境变量 HYMT_N_THREADS 显式覆盖。
+        n_threads = int(os.environ.get("HYMT_N_THREADS") or 0)
         llm = Llama(
             model_path=model_path,
             n_ctx=8192,
-            n_threads=4,
+            n_threads=n_threads,
             n_gpu_layers=-1,
             verbose=False,
         )
@@ -742,8 +849,10 @@ def translate():
 
     started = time.time()
 
-    # 客户端未显式传 max_tokens 时按输入长度动态计算，避免长段落截断
-    max_tokens = data.get("max_tokens") or estimate_max_tokens(text)
+    # 客户端未显式传 max_tokens 时按输入长度动态计算，避免长段落截断；
+    # 显式传入则钳制到上限，防第三方传极大值占满上下文
+    req_max = data.get("max_tokens")
+    max_tokens = _clamp_max_tokens(req_max) if req_max else estimate_max_tokens(text)
 
     if stream:
         prompt = build_translate_prompt(text, target_lang, context, glossary)
@@ -772,8 +881,13 @@ def translate():
 
 
 # --------------------------------------------------------------------------
-# 批量翻译：整页翻译的提速来源。多条文本合并成一次推理，
-# 摊薄每条一次的完整 prefill + 请求开销（原来 40 段 = 40 次完整推理）。
+# 批量翻译端点：多条文本合并成一次推理，摊薄每条一次的完整 prefill。
+#
+# 注意（实测结论，勿被旧注释误导）：本地 GGUF 推理里「批量」并不会提速——
+# 1.8B 解码极快，耗时大头是解码量；批量只是把多条拼进同一次 prefill，不减少
+# 总解码量，反而因编号协议解析/降级开销比逐条还慢约 15–24%（见项目工作记忆
+# 2026-08-31 实测）。本端点目前没有任何客户端调用，仅作为 OpenAI 兼容的
+# 备用能力保留；整页翻译的提速杠杆是「缓存持久化」而非批量。
 # --------------------------------------------------------------------------
 
 BATCH_MAX_ITEMS = 20          # 单批条数上限（沉浸式翻译为 25，这里保守一些）
@@ -1032,7 +1146,7 @@ def chat_completions():
         with inference_lock:
             response = llm(
                 prompt,
-                max_tokens=data.get("max_tokens", 2048),
+                max_tokens=_clamp_max_tokens(data.get("max_tokens", 2048)),
                 temperature=data.get("temperature", 0.3),
                 top_p=0.6,
                 top_k=20,
@@ -1063,7 +1177,7 @@ def stream_chat(prompt, data):
             with inference_lock:
                 for chunk in llm(
                     prompt,
-                    max_tokens=data.get("max_tokens", 2048),
+                    max_tokens=_clamp_max_tokens(data.get("max_tokens", 2048)),
                     temperature=data.get("temperature", 0.3),
                     top_p=0.6,
                     top_k=20,
@@ -1419,6 +1533,11 @@ def pdf_toc():
     if not uploaded.filename:
         return jsonify({"error": "文件名为空"}), 400
 
+    # 先剥离路径穿越风险，再校验扩展名
+    safe_name = _safe_upload_name(uploaded.filename)
+    if not safe_name.lower().endswith(".pdf"):
+        return jsonify({"error": "仅支持 PDF 文件（.pdf）"}), 400
+
     try:
         from pdf_toc import extract_toc
     except ImportError as e:
@@ -1427,8 +1546,13 @@ def pdf_toc():
     upload_id = str(uuid.uuid4())
     udir = os.path.join(UPLOAD_DIR, upload_id)
     os.makedirs(udir, exist_ok=True)
-    path = os.path.join(udir, uploaded.filename)
+    path = os.path.join(udir, safe_name)
     uploaded.save(path)
+
+    # 扩展名之外再验 %PDF 魔数：传错文件时提前返回 400，而不是在 pymupdf.open 处爆 500
+    if not _is_pdf_file(path):
+        shutil.rmtree(udir, ignore_errors=True)
+        return jsonify({"error": "文件不是有效的 PDF（缺少 %PDF 头）"}), 400
 
     try:
         digest = _sha256_of(path)
@@ -1444,7 +1568,7 @@ def pdf_toc():
 
     PDF_UPLOADS[upload_id] = {
         "path": path,
-        "filename": uploaded.filename,
+        "filename": safe_name,
         "sha256": digest,
         "page_count": result.get("page_count"),
         "created_at": time.time(),
@@ -1453,7 +1577,7 @@ def pdf_toc():
 
     return jsonify({
         "upload_id": upload_id,
-        "filename": uploaded.filename,
+        "filename": safe_name,
         "page_count": result.get("page_count"),
         "source": result.get("source"),
         "confidence": result.get("confidence"),
@@ -1522,7 +1646,10 @@ def pdf_translate():
             return jsonify({"error": "上传已过期，请重新选择文件"}), 410
         src_file, filename = up["path"], up["filename"]
     elif uploaded and uploaded.filename:
-        src_file, filename = None, uploaded.filename
+        filename = _safe_upload_name(uploaded.filename)
+        if not filename.lower().endswith(".pdf"):
+            return jsonify({"error": "仅支持 PDF 文件（.pdf）"}), 400
+        src_file = None
     else:
         return jsonify({"error": "缺少 upload_id 或 file"}), 400
 
@@ -2073,7 +2200,9 @@ def doc_translate():
     if not uploaded.filename:
         return jsonify({"error": "文件名为空"}), 400
 
-    ext = os.path.splitext(uploaded.filename)[1].lower().lstrip(".")
+    # 先剥离路径穿越风险，再从净化后的文件名取扩展名
+    safe_name = _safe_upload_name(uploaded.filename)
+    ext = os.path.splitext(safe_name)[1].lower().lstrip(".")
     if ext not in ("txt", "srt", "ass", "epub"):
         return jsonify({"error": f"暂不支持的文件类型 .{ext}（支持 txt / srt / ass / epub）"}), 400
 
@@ -2085,13 +2214,13 @@ def doc_translate():
     job_id = str(uuid.uuid4())
     workdir = os.path.join(DOC_JOBS_DIR, job_id)
     os.makedirs(workdir, exist_ok=True)
-    input_path = os.path.join(workdir, uploaded.filename)
+    input_path = os.path.join(workdir, safe_name)
     uploaded.save(input_path)
 
     DOC_JOBS[job_id] = {
         "status": "pending",
         "progress": "排队中",
-        "filename": uploaded.filename,
+        "filename": safe_name,
         "kind": ext,
         "mode": mode,
         "workdir": workdir,
@@ -2141,684 +2270,7 @@ def doc_download(job_id):
 # Web 页面
 # --------------------------------------------------------------------------
 
-PDF_PAGE = r"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MagicLingua</title>
-<style>
-  * { box-sizing: border-box; }
-  :root {
-    --canvas:#ffffff; --surface:#f7f8fa; --surface-2:#f2f4f8; --surface-3:#e9ecf1;
-    --ink:#1c1c1e; --ink-soft:#555a6a; --ink-muted:#8e91a0;
-    --line:#e0e2e8; --line-soft:#eef0f3;
-    --yellow:#ffd02f; --yellow-light:#fff4c4; --surface-yellow:#fff8e0; --yellow-dark:#746019; --yellow-line:#ffe9b0;
-    --blue:#4262ff; --teal:#0fbcb0; --teal-light:#c3faf5; --teal-dark:#0a8a82; --coral:#c0392b;
-  }
-  body {
-    margin: 0; padding: 24px 20px 88px;
-    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
-    background: var(--surface); color: var(--ink); line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-  }
-  .wrap { max-width: 1240px; margin: 0 auto; }
-
-  /* 顶栏：品牌标识 + 标题，右侧进度区 */
-  .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; flex-wrap: wrap; margin-bottom: 18px; }
-  .brand { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 260px; }
-  .logo {
-    width: 34px; height: 34px; border-radius: 9px; background: var(--yellow);
-    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-  }
-  .brand h1 { font-size: 22px; font-weight: 600; margin: 0 0 2px; letter-spacing: -.2px; }
-  .sub { color: var(--ink-muted); font-size: 13px; margin: 0; }
-  .topbar .status { flex: 1; min-width: 260px; max-width: 440px; margin-top: 0; }
-
-  /* 翻译进度 */
-  .status { display: none; margin-top: 14px; font-size: 13px; color: var(--ink-soft); }
-  .status.show { display: block; }
-  .bar { height: 6px; background: var(--line-soft); border-radius: 3px; overflow: hidden; margin-top: 8px; }
-  .bar > div { height: 100%; background: #1c1c1e; width: 30%; transition: width .3s; border-radius: 3px; }
-  .log {
-    font-size: 12px; color: var(--ink-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    margin-top: 8px; word-break: break-all; max-height: 90px; overflow-y: auto;
-  }
-  .ok { color: var(--teal-dark); } .err { color: var(--coral); }
-
-  /* 卡片 */
-  .card {
-    background: var(--canvas); border: 1px solid var(--line-soft);
-    border-radius: 16px; padding: 24px; margin-bottom: 16px;
-    box-shadow: 0 1px 3px rgba(16, 24, 40, .05);
-  }
-  h2 { font-size: 15px; font-weight: 600; margin: 0 0 14px;
-       display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-
-  .file-chip { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-soft); min-width: 0; }
-  .file-chip b { font-weight: 600; color: var(--ink); word-break: break-all; }
-  .card.compact { padding: 14px 20px; margin-bottom: 12px; }
-  .card.compact h2 { margin-bottom: 10px; }
-  .card.compact .drop { display: none; }
-  .card.compact .row { margin-top: 10px; }
-
-  /* 拖放区 */
-  .drop {
-    border: 2px dashed var(--line); border-radius: 16px; padding: 44px 20px; text-align: center;
-    cursor: pointer; transition: all .18s; background: var(--surface);
-  }
-  .drop strong { font-size: 15px; color: var(--ink); }
-  .drop:hover, .drop.over { border-color: var(--yellow); background: var(--surface-yellow); }
-  .drop p { margin: 8px 0 0; color: var(--ink-muted); font-size: 13px; }
-
-  .row { display: flex; gap: 12px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
-  input[type=text] {
-    flex: 1; min-width: 140px; padding: 11px 14px; border: 1px solid var(--line);
-    border-radius: 10px; font-size: 14px; font-family: inherit; background: var(--canvas); color: var(--ink);
-  }
-  input[type=text]:focus { outline: none; border-color: var(--blue); }
-
-  /* 主行动：黑色药丸（Miro 标志性） */
-  button {
-    padding: 12px 22px; border: none; border-radius: 999px; background: #1c1c1e; color: #fff;
-    font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit;
-    transition: opacity .15s ease, transform .1s ease;
-  }
-  button:hover { opacity: .88; }
-  button:active { transform: scale(.99); }
-  button:disabled { background: var(--line); color: var(--ink-muted); cursor: not-allowed; }
-
-  .inline-check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-soft); cursor: pointer; user-select: none; }
-  .inline-check input[type=checkbox] { width: 18px; height: 18px; accent-color: #1c1c1e; cursor: pointer; }
-
-  /* 双栏工作区 */
-  .work { display: none; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
-  .work.show { display: flex; }
-  .pane { flex: 1; min-width: 0; }
-  .pane-preview {
-    width: 380px; flex-shrink: 0; position: sticky; top: 20px; background: var(--canvas);
-    border: 1px solid var(--line-soft); border-radius: 16px; padding: 16px;
-  }
-  .pv-head { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
-  .pv-box {
-    height: min(620px, calc(100vh - 260px)); min-height: 300px;
-    display: flex; align-items: center; justify-content: center;
-    background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px; overflow: hidden;
-  }
-  .pv-box img { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 4px 20px rgba(0,0,0,.12); }
-  .pv-meta { font-size: 12.5px; color: var(--ink-muted); margin-top: 10px; line-height: 1.5; min-height: 34px; }
-
-  /* 文章目录 */
-  .toc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
-  .toc-head strong { font-size: 15px; font-weight: 600; }
-  .toc-actions { display: flex; gap: 8px; }
-  .toc-list {
-    max-height: calc(100vh - 380px); min-height: 320px; overflow-y: auto;
-    border: 1px solid var(--line-soft); border-radius: 12px; background: var(--canvas);
-  }
-  .toc-item {
-    display: flex; align-items: flex-start; gap: 12px; padding: 10px 14px;
-    border-bottom: 1px solid var(--line-soft); font-size: 14px; cursor: pointer; transition: background .12s;
-  }
-  .toc-item:last-child { border-bottom: none; }
-  .toc-item:hover { background: var(--yellow-light); }
-  .toc-item:has(input:checked) { background: var(--yellow-light); }
-  .toc-item input[type=checkbox] { width: 16px; height: 16px; margin-top: 3px; accent-color: #1c1c1e; cursor: pointer; flex-shrink: 0; }
-  .thumb {
-    width: 148px; height: 104px; object-fit: cover; object-position: top center; flex-shrink: 0;
-    border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface); cursor: zoom-in;
-  }
-  .thumb:hover { border-color: var(--yellow); }
-  .toc-body { flex: 1; min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-  .toc-main { flex: 1; min-width: 0; }
-  .toc-page { font-size: 12.5px; color: var(--ink-muted); white-space: nowrap; flex-shrink: 0; padding-top: 1px; }
-  .toc-title { display: block; word-break: break-word; line-height: 1.45; font-weight: 500; }
-  .toc-title.low { color: var(--ink-muted); font-weight: 400; }
-  .toc-meta { display: block; font-size: 12px; color: var(--ink-muted); margin-top: 2px; }
-  .tag {
-    display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px;
-    background: var(--surface-yellow); color: var(--yellow-dark); margin-left: 6px; vertical-align: 1px;
-  }
-  .toc-foot { font-size: 12.5px; color: var(--ink-muted); margin-top: 10px; }
-  .toc-warn {
-    font-size: 13px; color: var(--yellow-dark); background: var(--surface-yellow);
-    border: 1px solid var(--yellow-line); border-radius: 10px; padding: 9px 12px; margin-bottom: 12px;
-  }
-
-  /* 底部常驻操作条 */
-  .actionbar {
-    position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
-    background: var(--canvas); border-top: 1px solid var(--line-soft);
-    padding: 12px 20px; box-shadow: 0 -4px 20px rgba(0,0,0,.06);
-  }
-  .ab-inner { max-width: 1240px; margin: 0 auto; display: flex; align-items: center; gap: 14px; }
-  .ab-info { flex: 1; font-size: 14px; color: var(--ink-soft); }
-
-  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
-
-  /* 历史任务 */
-  .job { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 11px 0; border-bottom: 1px solid var(--line-soft); }
-  .job:last-child { border-bottom: none; }
-  .job-main { flex: 1; min-width: 200px; }
-  .job-name { font-size: 14px; word-break: break-all; font-weight: 500; }
-  .job-meta { font-size: 12px; color: var(--ink-muted); margin-top: 2px; }
-  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 500; white-space: nowrap; }
-  .badge-done { background: var(--teal-light); color: var(--teal-dark); }
-  .badge-run  { background: var(--surface-yellow); color: var(--yellow-dark); }
-  .badge-err  { background: #ffe5e5; color: var(--coral); }
-
-  .btn-ghost {
-    background: var(--surface-2); color: var(--ink-soft); border: 1px solid transparent;
-    padding: 7px 14px; font-size: 13px; border-radius: 999px;
-    transition: background .15s ease, color .15s ease;
-  }
-  .btn-ghost:hover { background: var(--surface-3); color: var(--ink); }
-  .btn-danger { background: #ffe5e5; color: var(--coral); border: 1px solid transparent; padding: 7px 14px; font-size: 13px; border-radius: 999px; transition: background .15s ease; }
-  .btn-danger:hover { background: #f7d2d2; }
-  .empty { color: var(--ink-muted); font-size: 13px; padding: 14px; text-align: center; }
-
-  ul { margin: 0; padding-left: 20px; color: var(--ink-soft); font-size: 13.5px; }
-  li { margin-bottom: 6px; }
-  code { background: var(--surface); padding: 2px 6px; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
-
-  @media (max-width: 1080px) {
-    .work.show { display: block; }
-    .pane-preview { display: none; }
-    .cols { grid-template-columns: 1fr; }
-  }
-  @media (max-width: 640px) {
-    body { padding: 16px 12px 84px; }
-    .card { padding: 16px; }
-    .drop { padding: 32px 16px; }
-    .row { flex-direction: column; align-items: stretch; }
-    .row button { width: 100%; }
-    .toc-item { gap: 10px; }
-    .thumb { width: 92px; height: 68px; }
-    .ab-inner { flex-wrap: wrap; }
-  }
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="topbar">
-    <div class="brand">
-      <span class="logo">
-        <svg width="34" height="34" viewBox="0 0 34 34" fill="none" aria-hidden="true">
-          <path d="M9 12H19M14 12V22M14 12L9 22M14 12L19 22" stroke="#1C1C1E" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </span>
-      <div>
-        <h1>MagicLingua</h1>
-        <div class="sub">本地 Hy-MT2 1.8B · 数据不出本机</div>
-      </div>
-    </div>
-    <div class="status" id="status">
-      <div id="statusText"></div>
-      <div class="bar"><div id="bar"></div></div>
-      <div class="log" id="log"></div>
-    </div>
-  </div>
-
-  <div class="card" id="uploadCard">
-    <h2>
-      <span>文档翻译</span>
-      <span class="file-chip" id="fileChip" style="display:none">
-        <b id="fileName"></b>
-        <button class="btn-ghost" id="rechoose">换一个文件</button>
-      </span>
-    </h2>
-    <div class="row" id="typeRow" style="margin-top:0;margin-bottom:14px">
-      <label class="inline-check"><input type="radio" name="doctype" value="pdf" checked> PDF</label>
-      <label class="inline-check"><input type="radio" name="doctype" value="epub"> EPUB</label>
-      <label class="inline-check"><input type="radio" name="doctype" value="txt"> TXT</label>
-      <label class="inline-check"><input type="radio" name="doctype" value="srt"> SRT</label>
-      <label class="inline-check"><input type="radio" name="doctype" value="ass"> ASS</label>
-    </div>
-    <div class="drop" id="drop">
-      <strong id="dropTitle">点击选择 PDF</strong>
-      <p id="dropSub">或把文件拖到这里 · 引擎 BabelDOC，保留原版面</p>
-    </div>
-    <input type="file" id="file" accept=".pdf" style="display:none">
-    <div class="row" id="modeRow" style="margin-top:12px">
-      <label class="inline-check"><input type="checkbox" id="bilingual"> 对照阅读（原文 + 译文）</label>
-    </div>
-    <div class="row" id="pagesRow">
-      <input type="text" id="pages" placeholder="页码范围，留空翻译全部（如 1,3-5）">
-      <button id="start" disabled>开始翻译</button>
-    </div>
-  </div>
-
-  <div class="work" id="tocBox">
-    <section class="card pane">
-      <div class="toc-head">
-        <strong id="tocTitle">文章目录</strong>
-        <div class="toc-actions">
-          <button class="btn-ghost" id="selAll">全选</button>
-          <button class="btn-ghost" id="selNone">清空</button>
-        </div>
-      </div>
-      <div class="toc-warn" id="tocWarn" style="display:none"></div>
-      <div class="toc-list" id="tocList"></div>
-      <div class="toc-foot" id="tocFoot"></div>
-    </section>
-
-    <aside class="pane-preview">
-      <div class="pv-head">页面预览</div>
-      <div class="pv-box"><img id="pvImg" alt="页面预览"></div>
-      <div class="pv-meta" id="pvMeta">鼠标移到左侧条目即可在此预览；点缩略图看大图。</div>
-    </aside>
-  </div>
-
-  <div class="cols">
-    <div class="card" id="historyCard" style="display:none">
-      <h2>历史任务</h2>
-      <div id="jobs"></div>
-    </div>
-
-    <div class="card">
-      <h2>网页与视频翻译</h2>
-      <ul>
-        <li>看新闻、看 YouTube：由 Chrome 扩展自动完成，无需在此操作</li>
-        <li>扩展未安装时，到 <code>chrome://extensions</code> 加载 <code>extension/</code> 目录</li>
-      </ul>
-    </div>
-  </div>
-</div>
-
-<div class="actionbar" id="actionBar" style="display:none">
-  <div class="ab-inner">
-    <div class="ab-info" id="abInfo">未选择任何文章</div>
-    <button id="start2">开始翻译</button>
-  </div>
-</div>
-
-<div id="lb" onclick="closeLb()" style="display:none;position:fixed;inset:0;z-index:99;background:rgba(0,0,0,.76);overflow:auto;cursor:zoom-out">
-  <div style="position:fixed;top:14px;left:0;right:0;text-align:center;color:#fff;font-size:13px;z-index:100;pointer-events:none">
-    <span id="lbInfo"></span>
-    <span style="opacity:.65;margin-left:14px">点图片切换 适应窗口 / 原始尺寸 · ESC 关闭</span>
-  </div>
-  <div style="min-height:100%;display:flex;align-items:center;justify-content:center;padding:56px 16px">
-    <img id="lbImg" alt="页面预览" onclick="toggleZoom(event)"
-         style="max-width:100%;max-height:86vh;cursor:zoom-in;border-radius:6px;background:#fff;box-shadow:0 10px 40px rgba(0,0,0,.5)">
-  </div>
-</div>
-
-<script>
-const drop = document.getElementById('drop');
-const fileInput = document.getElementById('file');
-const uploadCard = document.getElementById('uploadCard');
-const fileChip = document.getElementById('fileChip');
-const fileName = document.getElementById('fileName');
-const rechooseBtn = document.getElementById('rechoose');
-const startBtn = document.getElementById('start');
-const statusBox = document.getElementById('status');
-const statusText = document.getElementById('statusText');
-const bar = document.getElementById('bar');
-const logEl = document.getElementById('log');
-const pagesInput = document.getElementById('pages');
-const bilingualCheck = document.getElementById('bilingual');
-const tocBox = document.getElementById('tocBox');
-const tocTitle = document.getElementById('tocTitle');
-const tocList = document.getElementById('tocList');
-const tocFoot = document.getElementById('tocFoot');
-const tocWarn = document.getElementById('tocWarn');
-const selAllBtn = document.getElementById('selAll');
-const selNoneBtn = document.getElementById('selNone');
-const pvImg = document.getElementById('pvImg');
-const pvMeta = document.getElementById('pvMeta');
-const actionBar = document.getElementById('actionBar');
-const abInfo = document.getElementById('abInfo');
-const startBtn2 = document.getElementById('start2');
-const typeInputs = document.querySelectorAll('input[name="doctype"]');
-const dropTitle = document.getElementById('dropTitle');
-const dropSub = document.getElementById('dropSub');
-const pagesRow = document.getElementById('pagesRow');
-
-// 文件类型：PDF 走 BabelDOC 版面还原；EPUB/TXT/SRT/ASS 走轻量文档管线
-const DOC_TYPE_LABEL = {
-  pdf:  ['PDF', '.pdf', '或把文件拖到这里 · 引擎 BabelDOC，保留原版面'],
-  epub: ['EPUB', '.epub', '或把文件拖到这里 · 本地模型逐段翻译，双语保留原样式'],
-  txt:  ['TXT', '.txt', '或把文件拖到这里 · 按段落输出双语对照'],
-  srt:  ['SRT 字幕', '.srt', '或把文件拖到这里 · 输出双语字幕（时间轴不变）'],
-  ass:  ['ASS 字幕', '.ass', '或把文件拖到这里 · 输出双语字幕（时间轴不变）']
-};
-function currentDocType() {
-  const el = document.querySelector('input[name="doctype"]:checked');
-  return el ? el.value : 'pdf';
-}
-typeInputs.forEach(r => r.onchange = () => {
-  const t = DOC_TYPE_LABEL[currentDocType()];
-  const isPdf = currentDocType() === 'pdf';
-  fileInput.accept = t[1];
-  dropTitle.textContent = '点击选择 ' + t[0];
-  dropSub.textContent = t[2];
-  pagesRow.style.display = isPdf ? 'flex' : 'none';
-  if (!isPdf) bilingualCheck.checked = true;   // 文档翻译默认双语对照；PDF 保持原同步逻辑
-  updateStartLabel();
-});
-
-// 扩展 LocalBridge 会把 chrome.storage.sync.pdfBilingual 写到 localStorage，
-// 装上扩展的用户这里的开关会自动同步；没装扩展时永远是 false。
-try {
-  const raw = localStorage.getItem('hy_mt_pdf_bilingual');
-  if (raw) bilingualCheck.checked = JSON.parse(raw);
-} catch (e) { /* 隐私模式静默 */ }
-
-let selected = null;
-let tocData = null;      // /v1/pdf/toc 的返回，含 upload_id 与文章清单
-let checked = new Set(); // 已勾选的文章下标
-
-function esc(s) {
-  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-}
-
-function updateStartLabel() {
-  let label = '开始翻译', info = '未选择任何文件';
-  if (currentDocType() !== 'pdf' && selected) {
-    label = '开始翻译';
-    info = selected.name + (bilingualCheck.checked ? ' · 双语对照' : ' · 仅译文');
-    startBtn.textContent = label;
-    startBtn2.textContent = label;
-    abInfo.textContent = info;
-    return;
-  }
-  if (selected && tocData && checked.size > 0) {
-    let n = 0;
-    checked.forEach(i => { n += tocData.articles[i].pages; });
-    label = `翻译已选 ${checked.size} 篇 / ${n} 页`;
-    info = `已选 ${checked.size} / ${tocData.articles.length} 篇 · 共 ${n} 页`;
-  } else if (selected && tocData && tocData.page_count) {
-    label = `翻译全部（${tocData.page_count} 页）`;
-    info = `未勾选，将翻译整本 ${tocData.page_count} 页`;
-  }
-  startBtn.textContent = label;
-  startBtn2.textContent = label;
-  abInfo.textContent = info;
-}
-
-// 悬停即在右侧大图预览，省去逐个点开
-let pvTimer = null;
-function previewPage(page, title) {
-  clearTimeout(pvTimer);
-  pvTimer = setTimeout(() => {
-    pvImg.src = `/v1/pdf/thumb/${tocData.upload_id}/${page}?w=760`;
-    pvMeta.textContent = `第 ${page} 页 · ${title}`;
-  }, 110);
-}
-
-function renderToc() {
-  const arts = tocData.articles || [];
-  tocTitle.textContent = `文章目录 · ${arts.length} 篇 / 共 ${tocData.page_count} 页`;
-
-  if (tocData.warnings && tocData.warnings.length) {
-    tocWarn.style.display = 'block';
-    tocWarn.textContent = tocData.warnings.join('；');
-  } else {
-    tocWarn.style.display = 'none';
-  }
-
-  tocList.innerHTML = arts.map((a, i) => {
-    const span = a.end > a.start ? `${a.start}-${a.end}` : `${a.start}`;
-    const low = a.confidence !== 'high';
-    const tag = (a.flags && a.flags.length) ? `<span class="tag">${esc(a.flags.join(','))}</span>` : '';
-    const meta = a.pages > 1 ? `共 ${a.pages} 页` : '单页';
-    return `<div class="toc-item" data-t="${esc(a.title)}"
-           onmouseenter="previewPage(${a.start}, this.dataset.t)">
-      <input type="checkbox" data-i="${i}" id="cb${i}">
-      <img class="thumb" loading="lazy" alt="第 ${a.start} 页" data-t="${esc(a.title)}"
-           src="/v1/pdf/thumb/${tocData.upload_id}/${a.start}?w=300"
-           onclick="openLb(event, ${a.start}, this.dataset.t)">
-      <span class="toc-body" onclick="document.getElementById('cb${i}').click()">
-        <span class="toc-main">
-          <span class="toc-title${low ? ' low' : ''}">${esc(a.title)}${tag}</span>
-          <span class="toc-meta">${meta}${low ? ' · 标题为推测' : ''}</span>
-        </span>
-        <span class="toc-page">P.${span}</span>
-      </span>
-    </div>`;
-  }).join('');
-
-  tocList.querySelectorAll('input[data-i]').forEach(cb => {
-    cb.onchange = () => {
-      const i = Number(cb.dataset.i);
-      if (cb.checked) checked.add(i); else checked.delete(i);
-      selAllBtn.textContent = (checked.size === arts.length) ? '取消全选' : '全选';
-      updateStartLabel();
-    };
-  });
-
-  pagesInput.placeholder = '手工页码（填了会覆盖上方勾选，如 1,3-5）';
-  tocFoot.textContent = '默认不勾选 · 点缩略图看大图 · 一篇都不勾直接翻译＝翻译整本。';
-  updateStartLabel();
-}
-
-let lbZoomed = false;
-
-function openLb(ev, page, title) {
-  ev.stopPropagation();
-  lbZoomed = false;
-  const img = document.getElementById('lbImg');
-  img.src = `/v1/pdf/thumb/${tocData.upload_id}/${page}?w=1200`;
-  img.style.maxWidth = '100%';
-  img.style.maxHeight = '86vh';
-  img.style.cursor = 'zoom-in';
-  document.getElementById('lbInfo').textContent = `第 ${page} 页 · ${title}`;
-  document.getElementById('lb').style.display = 'block';
-}
-
-// 再点图片：适应窗口 <-> 原始尺寸（原始尺寸下能看清正文）
-function toggleZoom(ev) {
-  ev.stopPropagation();
-  lbZoomed = !lbZoomed;
-  const img = document.getElementById('lbImg');
-  img.style.maxWidth = lbZoomed ? 'none' : '100%';
-  img.style.maxHeight = lbZoomed ? 'none' : '86vh';
-  img.style.cursor = lbZoomed ? 'zoom-out' : 'zoom-in';
-}
-
-function closeLb() { document.getElementById('lb').style.display = 'none'; }
-
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeLb();
-});
-
-function checkAll(v) {
-  if (!tocData) return;
-  checked.clear();
-  if (v) tocData.articles.forEach((a, i) => checked.add(i));
-  tocList.querySelectorAll('input[data-i]').forEach(cb => { cb.checked = v; });
-  selAllBtn.textContent = v ? '取消全选' : '全选';
-  updateStartLabel();
-}
-
-selAllBtn.onclick = () => checkAll(checked.size !== (tocData ? tocData.articles.length : 0));
-selNoneBtn.onclick = () => checkAll(false);
-
-drop.onclick = () => fileInput.click();
-rechooseBtn.onclick = () => fileInput.click();
-drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
-drop.ondragleave = () => drop.classList.remove('over');
-drop.ondrop = e => {
-  e.preventDefault(); drop.classList.remove('over');
-  if (e.dataTransfer.files[0]) pick(e.dataTransfer.files[0]);
-};
-fileInput.onchange = e => { if (e.target.files[0]) pick(e.target.files[0]); };
-
-async function pick(f) {
-  selected = f;
-  tocData = null;
-  checked.clear();
-  fileName.textContent = f.name;
-  fileChip.style.display = 'flex';
-  uploadCard.classList.add('compact');   // 收起拖拽区，把高度让给目录
-  startBtn.disabled = false;
-  statusBox.classList.remove('show');
-  selAllBtn.textContent = '全选';
-
-  // 非 PDF：无目录/页码概念，选完即进入可翻译状态（底部操作栏显示开始按钮）
-  if (currentDocType() !== 'pdf') {
-    tocBox.classList.remove('show');
-    actionBar.style.display = 'block';
-    updateStartLabel();
-    return;
-  }
-
-  // 上传并解析目录（2-4 秒）。失败就退回手工页码，绝不阻塞用户。
-  const fd = new FormData();
-  fd.append('file', f);
-  tocBox.classList.add('show');
-  actionBar.style.display = 'block';
-  tocTitle.textContent = '解析目录中…';
-  tocWarn.style.display = 'none';
-  tocList.innerHTML = '<div class="empty">正在识别文章，约 2-4 秒…</div>';
-  tocFoot.textContent = '';
-  try {
-    const r = await fetch('/v1/pdf/toc', { method: 'POST', body: fd });
-    const d = await r.json();
-    if (d.error) throw new Error(d.error);
-    tocData = d;
-    renderToc();
-  } catch (e) {
-    tocBox.classList.remove('show');
-    actionBar.style.display = 'none';
-    tocData = null;
-  }
-  updateStartLabel();
-}
-
-async function startTranslate() {
-  if (!selected) return;
-
-  // ---- 轻量文档（EPUB / TXT / SRT / ASS）----
-  if (currentDocType() !== 'pdf') {
-    const fd = new FormData();
-    fd.append('file', selected);
-    fd.append('mode', bilingualCheck.checked ? 'dual' : 'mono');
-    startBtn.disabled = startBtn2.disabled = true;
-    statusBox.classList.add('show');
-    statusText.textContent = '上传中...';
-    bar.style.width = '15%';
-    const res = await fetch('/v1/doc/translate', { method: 'POST', body: fd });
-    const data = await res.json();
-    if (data.error) {
-      statusText.innerHTML = '<span class="err">失败：' + esc(data.error) + '</span>';
-      startBtn.disabled = startBtn2.disabled = false;
-      return;
-    }
-    pollJob('/v1/doc/status/' + data.job_id, '/v1/doc/download/' + data.job_id);
-    return;
-  }
-
-  const fd = new FormData();
-  const manual = pagesInput.value.trim();
-
-  if (tocData) {
-    fd.append('upload_id', tocData.upload_id);
-    if (manual) {
-      fd.append('pages', manual);            // 手工页码优先，覆盖勾选
-    } else if (checked.size > 0) {
-      const sel = [...checked].sort((a, b) => a - b).map(i => {
-        const a = tocData.articles[i];
-        return { title: a.title, start: a.start, end: a.end };
-      });
-      fd.append('selection', JSON.stringify(sel));
-    }
-    // 两者都空 = 翻译整本
-  } else {
-    fd.append('file', selected);             // 目录不可用，走旧路径
-    if (manual) fd.append('pages', manual);
-  }
-  fd.append('mode', bilingualCheck.checked ? 'dual' : 'mono');
-
-  startBtn.disabled = startBtn2.disabled = true;
-  statusBox.classList.add('show');
-  statusText.textContent = '上传中...';
-  bar.style.width = '15%';
-
-  const res = await fetch('/v1/pdf/translate', { method: 'POST', body: fd });
-  const { job_id } = await res.json();
-
-  pollJob('/v1/pdf/status/' + job_id, '/v1/pdf/download/' + job_id);
-}
-
-function pollJob(statusUrl, downloadUrl) {
-  const timer = setInterval(async () => {
-    const s = await (await fetch(statusUrl)).json();
-    statusText.textContent = s.progress || s.status;
-    logEl.textContent = s.progress || '';
-    if (s.status === 'processing') bar.style.width = '60%';
-    if (s.status === 'completed') {
-      clearInterval(timer);
-      bar.style.width = '100%';
-      statusText.innerHTML = '<span class="ok">翻译完成，开始下载</span>';
-      window.location.href = downloadUrl;
-      startBtn.disabled = startBtn2.disabled = false;
-      loadJobs();
-    }
-    if (s.status === 'failed') {
-      clearInterval(timer);
-      statusText.innerHTML = '<span class="err">失败：' + esc(s.error || '未知错误') + '</span>';
-      startBtn.disabled = startBtn2.disabled = false;
-      loadJobs();
-    }
-  }, 1500);
-}
-
-startBtn.onclick = startTranslate;
-startBtn2.onclick = startTranslate;
-
-// ---- 历史任务管理（下载 / 删除） ----
-const historyCard = document.getElementById('historyCard');
-const jobsBox = document.getElementById('jobs');
-
-function fmtTime(ts) {
-  if (!ts) return '';
-  const d = new Date(ts * 1000);
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
-async function loadJobs() {
-  try {
-    const jobs = await (await fetch('/v1/pdf/jobs')).json();
-    if (!jobs || !jobs.length) {
-      historyCard.style.display = 'none';
-      return;
-    }
-    historyCard.style.display = 'block';
-    jobsBox.innerHTML = jobs.map(j => {
-      const badge = j.status === 'completed'
-        ? '<span class="badge badge-done">完成</span>'
-        : (j.status === 'failed' ? '<span class="badge badge-err">失败</span>'
-          : '<span class="badge badge-run">处理中</span>');
-      const dl = j.results.map(r =>
-        `<a class="btn-ghost" style="text-decoration:none;display:inline-block" href="/v1/pdf/download/${j.id}?variant=${r.variant}">${r.variant === 'mono' ? '下载译文' : '下载双语'}</a>`
-      ).join(' ');
-      return `
-        <div class="job">
-          <div class="job-main">
-            <div class="job-name">${j.filename} ${badge}</div>
-            <div class="job-meta">${fmtTime(j.created_at)}${j.pages ? ' · 页码 ' + j.pages : ''} · ${j.progress || ''}</div>
-          </div>
-          ${dl}
-          <button class="btn-danger" onclick="delJob('${j.id}')">删除</button>
-        </div>`;
-    }).join('');
-  } catch (e) { /* 服务未起等 */ }
-}
-
-async function delJob(id) {
-  if (!confirm('删除该任务及产物文件？此操作不可恢复。')) return;
-  await fetch('/v1/pdf/jobs/' + id, { method: 'DELETE' });
-  loadJobs();
-}
-
-loadJobs();
-</script>
-</body>
-</html>
-"""
+PDF_PAGE = _load_pdf_page()
 
 
 @app.route("/", methods=["GET"])
@@ -2840,6 +2292,7 @@ def main():
     _pdf_jobs_load()  # 恢复历史任务记录
     _uploads_load()
     _uploads_sweep()  # 清掉 24 小时前的上传件
+    _jobs_sweep()     # 清掉过期历史翻译任务，避免工作目录堆积
     os.makedirs(DOC_JOBS_DIR, exist_ok=True)  # 轻量文档翻译工作目录
 
     if not load_gguf_model():
@@ -2860,6 +2313,8 @@ def main():
     # watchdog 常驻线程：内部每轮动态读取 IDLE_EXIT_MIN，
     # 支持面板在运行时于「省电 / 常驻」之间切换
     threading.Thread(target=_idle_watchdog, daemon=True).start()
+    # 每小时清理一次过期历史翻译任务，防磁盘堆积
+    threading.Thread(target=_jobs_sweep_loop, daemon=True).start()
 
     app.run(host="127.0.0.1", port=PORT, threaded=True)
 
