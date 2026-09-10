@@ -159,6 +159,8 @@ cat > "$PLIST" <<PLISTEOF
         <string>18770</string>
         <key>HYMT_IDLE_EXIT</key>
         <string>20</string>
+        <key>HYMT_N_THREADS</key>
+        <string>4</string>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
