@@ -23,6 +23,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import uuid
 import zipfile
 
@@ -666,25 +667,180 @@ def looks_like_echo(text, source=""):
     return False
 
 
-def is_same_language(text, target_lang):
-    """目标语言已是原文语言时跳过翻译，省下推理时间。"""
+# --------------------------------------------------------------------------
+# 源语言粗判（只用于「源语言 == 目标语言时跳过翻译」这一项优化）
+#
+# 历史坑（2026-09-10）：旧实现用 re.sub(r"[^a-zA-Z\u4e00-\u9fff]", "", text)
+# 只保留拉丁字母和汉字，把日语假名、谚文、西里尔等全部当噪声丢弃，导致
+#   日文（汉字+假名混写）→ 目标中文：假名被丢掉后汉字占比虚高 → 误判为
+#   「已是中文」→ 跳过翻译、原样返回日文。ghibli.jp 90 个节点中 75 个中招。
+# 同一缺陷在目标为英文时命中所有拉丁语系（法/德/西/荷/越/土/波/捷…）与
+# 中英混排文本（拉丁占比过半）。
+#
+# 修正原则：字符集只能证明「不是」某语言，不能证明「是」。所以改为
+# 「敌对字符排除法」—— 只要出现不可能属于目标语言的字符，就一律不跳过。
+# 宁可多跑一次推理，也不能把该翻的文本原样吐回去。
+# --------------------------------------------------------------------------
+
+# 各文种 Unicode 区间
+_HIRAGANA_KATAKANA = r"\u3040-\u309f\u30a0-\u30ff\u31f0-\u31ff\uff66-\uff9f"
+_HANGUL = r"\uac00-\ud7af\u1100-\u11ff\u3130-\u318f"
+_CYRILLIC = r"\u0400-\u04ff\u0500-\u052f"
+_GREEK = r"\u0370-\u03ff\u1f00-\u1fff"
+_ARABIC = r"\u0600-\u06ff\u0750-\u077f\ufb50-\ufdff"
+_HEBREW = r"\u0590-\u05ff"
+_THAI = r"\u0e00-\u0e7f"
+_DEVANAGARI = r"\u0900-\u097f"
+# 拉丁扩展：带变音符号的拉丁字母（é ü ñ ß ø å ł ř ş ğ ı ơ ư …），
+# 覆盖德/法/西/意/葡/荷/土/波/捷/越等拉丁语系的特征字符
+_LATIN_EXT = r"\u00c0-\u024f"
+
+_HAN = r"\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff"
+
+# 既非汉字、也非拉丁字母的文种
+_RE_NON_HAN_NON_LATIN = re.compile(
+    "[" + _HIRAGANA_KATAKANA + _HANGUL + _CYRILLIC + _GREEK
+    + _ARABIC + _HEBREW + _THAI + _DEVANAGARI + "]"
+)
+_RE_HAN = re.compile("[" + _HAN + "]")
+_RE_LATIN_EXT = re.compile("[" + _LATIN_EXT + "]")
+_RE_LATIN = re.compile(r"[a-zA-Z]")
+
+
+# 语言码别名：地区/书写变体归到主码（zh-Hant、zh-CN 都算中文）
+_LANG_ALIAS = {
+    "zh-hans": "zh", "zh-hant": "zh", "zh-cn": "zh", "zh-sg": "zh",
+    "zh-tw": "zh", "zh-hk": "zh", "zh-mo": "zh",
+    "en-us": "en", "en-gb": "en", "en-au": "en", "en-ca": "en",
+    "jp": "ja", "kr": "ko", "pt-br": "pt",
+}
+
+
+def _lang_base(code):
+    """取语言主码并归并变体：zh-Hant -> zh，en-US -> en。"""
+    code = (code or "").strip().lower().replace("_", "-")
+    if not code:
+        return ""
+    if code in _LANG_ALIAS:
+        return _LANG_ALIAS[code]
+    return code.split("-")[0]
+
+
+def _lang_matches(a, b):
+    """两个语言码是否指同一种语言（忽略地区与书写变体）。"""
+    return bool(a) and bool(b) and _lang_base(a) == _lang_base(b)
+
+
+def _letters_only(text):
+    """只保留字母类字符（含汉字、假名、谚文等），剔除空白、数字、标点、符号。"""
+    return "".join(ch for ch in text if unicodedata.category(ch).startswith("L"))
+
+
+def is_same_language(text, target_lang, source_lang=None):
+    """目标语言已是原文语言时跳过翻译，省下推理时间。
+
+    只在「高度确信」时返回 True；拿不准就返回 False，多跑一次推理。
+
+    source_lang：调用方可选传入的源语言（如页面 <html lang="ja">）。
+    页面声明的语言比字符集推断可靠得多，一旦与目标语言不同就直接判定
+    「需要翻译」—— 这一条专门解决纯汉字日文词（最新情報 / 会社案内 /
+    関連書籍）与无变音符的拉丁语系（Le studio… / Het museum…）这类字符集
+    无法区分的漏网场景。
+    """
     if not text:
         return False
     lang = str(target_lang).lower()
 
-    # 只保留「字母」和「汉字」，其余（空白、标点、数字）一律剔除，
-    # 用剩余字符的语言构成来判断源语言。
-    stripped = re.sub(r"[^a-zA-Z\u4e00-\u9fff]", "", text)
-    if not stripped:
+    # 源语言已知且与目标不同 -> 必须翻译，无需再看字符
+    if source_lang and not _lang_matches(str(source_lang).lower(), lang):
+        return False
+
+    letters = _letters_only(text)
+    if not letters:
         return False
 
     if lang.startswith("zh"):
-        cjk = len(re.findall(r"[\u4e00-\u9fff]", stripped))
-        return cjk / len(stripped) > 0.3
+        # 出现假名/谚文/西里尔等 -> 一定不是中文。
+        # 这一条专门挡住「日文被当成中文」：日文靠假名与中文区分。
+        if _RE_NON_HAN_NON_LATIN.search(letters):
+            return False
+        han = len(_RE_HAN.findall(letters))
+        return han / len(letters) > 0.3
+
     if lang.startswith("en"):
-        latin = len(re.findall(r"[a-zA-Z]", stripped))
-        return latin / len(stripped) > 0.6
+        # 出现任何非拉丁文种（含汉字）-> 不是英文
+        if _RE_NON_HAN_NON_LATIN.search(letters) or _RE_HAN.search(letters):
+            return False
+        # 出现带变音符号的拉丁字母 -> 大概率是法/德/西/越/土/波/捷等，不是英文
+        if _RE_LATIN_EXT.search(letters):
+            return False
+        latin = len(_RE_LATIN.findall(letters))
+        return latin / len(letters) > 0.6
+
+    # 其余目标语言（ja/ko/fr/...）不做跳过判定：
+    # 字符集无法可靠区分同文种内的语言，宁可多跑推理也不误跳过。
     return False
+
+
+def detect_source_language(text, sample_chars=20000):
+    """从文本样本粗判源语言，返回语言码；判不出来返回空串。
+
+    只在字符集能明确区分时才下结论。**拉丁语系内部（法/德/西/意/荷…）无
+    法用字符集区分，一律返回 ''**，交回逐段判定 —— 宁可少一个优化，也不能
+    把法文当成英文而跳过翻译。
+
+    文档级检测的价值在于聚合：日文文档里必然混有假名，哪怕某个段落是纯
+    汉字（最新情報 / 会社案内），整篇判定为 ja 后就不会被误认成中文。
+    """
+    if not text:
+        return ""
+    letters = _letters_only(text[:sample_chars])
+    if not letters:
+        return ""
+    n = len(letters)
+
+    def ratio(pattern):
+        return len(re.findall(pattern, letters)) / n
+
+    # 只要出现假名就判日文：中文文本里不该有假名
+    if re.search("[" + _HIRAGANA_KATAKANA + "]", letters):
+        return "ja"
+    if ratio("[" + _HANGUL + "]") > 0.05:
+        return "ko"
+    if ratio("[" + _CYRILLIC + "]") > 0.1:
+        return "ru"
+    if ratio("[" + _ARABIC + "]") > 0.1:
+        return "ar"
+    if ratio("[" + _HEBREW + "]") > 0.1:
+        return "he"
+    if ratio("[" + _THAI + "]") > 0.1:
+        return "th"
+    if ratio("[" + _GREEK + "]") > 0.1:
+        return "el"
+    if ratio("[" + _DEVANAGARI + "]") > 0.1:
+        return "hi"
+    if ratio("[" + _HAN + "]") > 0.2:
+        return "zh"
+    # 纯拉丁语系无法细分 -> 未知
+    return ""
+
+
+def detect_pdf_language(path, max_pages=5):
+    """抽 PDF 前几页文字做源语言检测；失败返回空串（调用方回退默认值）。"""
+    try:
+        import pymupdf
+    except Exception:
+        return ""
+    try:
+        doc = pymupdf.open(path)
+        parts = []
+        for i in range(min(max_pages, doc.page_count)):
+            parts.append(doc[i].get_text())
+        doc.close()
+        return detect_source_language("\n".join(parts))
+    except Exception as e:
+        logger.warning(f"PDF 源语言检测失败，回退默认: {e}")
+        return ""
 
 
 # --------------------------------------------------------------------------
@@ -838,8 +994,10 @@ def translate():
     context = data.get("context")
     glossary = data.get("glossary")
     stream = bool(data.get("stream"))
+    # 页面 <html lang>：由客户端透传，比字符集推断可靠
+    source_lang = data.get("source_lang") or ""
 
-    if is_same_language(text, target_lang):
+    if is_same_language(text, target_lang, source_lang):
         return jsonify({
             "translation": text,
             "skipped": True,
@@ -970,6 +1128,7 @@ def translate_batch():
     data = request.json or {}
     raw_items = data.get("items") or []
     target_lang = data.get("target_lang") or user_config.get("target_lang", "zh")
+    source_lang = data.get("source_lang") or ""   # 页面 <html lang>，客户端透传
     started = time.time()
 
     if not raw_items:
@@ -1005,7 +1164,7 @@ def translate_batch():
     to_translate = []   # [(index, text)] 需要真正推理的
 
     for text in items:
-        if is_same_language(text, target_lang):
+        if is_same_language(text, target_lang, source_lang):
             for iid in seen[text]:
                 translations[str(iid)] = text
                 skipped[str(iid)] = True
@@ -1224,12 +1383,22 @@ BABELDOC_SYSTEM_PROMPT = (
 
 
 def find_babeldoc_executable():
-    exe = shutil.which("babeldoc")
-    if exe:
-        return [exe]
+    """返回 BabelDOC 启动命令。
+
+    注意：venv/bin/babeldoc 入口脚本的 shebang 写的是安装时的解释器绝对
+    路径，项目目录迁移后（magicfanyi -> magiclingua）该路径已不存在，直接
+    执行会报 ENOENT。因此只要走脚本文件启动，就显式用当前解释器包一层，
+    不依赖 shebang。
+    """
+    candidates = []
     venv_exe = os.path.join(BASE_DIR, "venv", "bin", "babeldoc")
     if os.path.exists(venv_exe):
-        return [venv_exe]
+        candidates.append(venv_exe)
+    exe = shutil.which("babeldoc")
+    if exe:
+        candidates.append(exe)
+    if candidates:
+        return [sys.executable, candidates[0]]
     return [sys.executable, "-m", "babeldoc.main"]
 
 
@@ -1295,11 +1464,14 @@ def _apply_bookmarks(pdf_path, bookmarks):
         logger.warning(f"写回书签失败 {pdf_path}: {e}")
 
 
-def run_babeldoc(job_id, input_path, lang_out="zh"):
+def run_babeldoc(job_id, input_path, lang_out="zh", lang_in=""):
     """后台任务：调用 BabelDOC CLI，翻译后端指回本服务的 OpenAI 兼容端点。
 
     注意：input_path 传进来的已经是**裁剪过**的 PDF（只含用户勾选的页），
     所以这里不再给 BabelDOC 传 --pages，也不做事后裁剪。
+
+    lang_in：PDF 源语言。留空时从正文自动检测；检测不出（纯拉丁语系）回退
+    en，与改造前的行为一致。
     """
     job = PDF_JOBS[job_id]
     workdir = os.path.dirname(input_path)
@@ -1338,13 +1510,17 @@ def run_babeldoc(job_id, input_path, lang_out="zh"):
             except Exception:
                 pass
 
+        if not lang_in:
+            lang_in = detect_pdf_language(input_path)
+            logger.info(f"[{job_id}] PDF 源语言自动检测: {lang_in or '未知(拉丁语系)，回退 en'}")
+
         cmd = find_babeldoc_executable() + [
             "--files", input_path,
             "--openai",
             "--openai-model", "hunyuan-mt",
             "--openai-base-url", f"http://127.0.0.1:{PORT}/v1",
             "--openai-api-key", "local",
-            "--lang-in", "en",
+            "--lang-in", lang_in or "en",
             "--lang-out", lang_out,
             "--qps", str(user_config.get("pdf_qps", 3)),
             "--custom-system-prompt", BABELDOC_SYSTEM_PROMPT,
@@ -1364,6 +1540,11 @@ def run_babeldoc(job_id, input_path, lang_out="zh"):
             env.pop(_k, None)
         env["NO_PROXY"] = "127.0.0.1,localhost"
         env["no_proxy"] = "127.0.0.1,localhost"
+
+        # 快照启动前工作目录里已有的 PDF（输入原件、OCR 中间产物）。
+        # 之后只认「新出现」的文件，杜绝把未翻译原件当结果返回。
+        import glob as _glob
+        preexisting_pdfs = set(_glob.glob(os.path.join(workdir, "*.pdf")))
 
         proc = subprocess.Popen(
             cmd,
@@ -1454,7 +1635,6 @@ def run_babeldoc(job_id, input_path, lang_out="zh"):
         #   {stem}.no_watermark.{lang}.mono.pdf    （纯译文版）
         #   {stem}.no_watermark.{lang}.dual.pdf    （双语对照版）
         #   {stem}.watermarked.{lang}.mono.pdf     （带水印版本）
-        import glob as _glob
 
         # run_babeldoc 是后台线程，不能访问 Flask request 上下文
         wanted_mode = job.get("mode", "mono")
@@ -1489,16 +1669,27 @@ def run_babeldoc(job_id, input_path, lang_out="zh"):
             logger.info(f"[{job_id}] 输出: {chosen}")
             return
 
-        # 兜底：列出工作目录里所有 PDF
-        all_pdfs = _glob.glob(os.path.join(workdir, "*.pdf"))
-        if all_pdfs:
+        # 兜底：BabelDOC 偶尔产出命名不合预期的文件。只认「本次运行新出现」
+        # 的 PDF —— 输入原件与其 OCR 中间产物在启动前就已存在，绝不充当结果。
+        new_pdfs = [
+            p for p in _glob.glob(os.path.join(workdir, "*.pdf"))
+            if p not in preexisting_pdfs
+            and p != input_path
+            and not os.path.basename(p).startswith("ocr_")
+        ]
+        if new_pdfs:
             job["status"] = "completed"
-            job["result"] = sorted(all_pdfs)[-1]
+            job["result"] = sorted(new_pdfs)[-1]
             job["progress"] = "完成（候选模糊匹配）"
+            logger.warning(f"[{job_id}] 产物命名不合规，模糊匹配: {job['result']}")
             return
 
+        # 零产物：BabelDOC 静默失败（如被判定为扫描件），绝不能标 completed。
         job["status"] = "failed"
-        job["error"] = "BabelDOC 未生成输出文件"
+        job["error"] = (
+            "BabelDOC 退出码为 0 但未生成翻译产物。常见原因：PDF 被判定为"
+            "扫描件、版面解析失败或页面无可译文本，详情请查看服务日志。"
+        )
 
     except Exception as e:
         logger.error(f"[{job_id}] PDF 翻译异常: {e}")
@@ -1506,13 +1697,13 @@ def run_babeldoc(job_id, input_path, lang_out="zh"):
         job["error"] = str(e)
 
 
-def _run_pdf_job(job_id, input_path, lang_out):
+def _run_pdf_job(job_id, input_path, lang_out, lang_in=""):
     """包一层：PDF 任务跑着的时候，空闲看门狗不许退出服务。"""
     global _active_jobs
     with _activity_lock:
         _active_jobs += 1
     try:
-        run_babeldoc(job_id, input_path, lang_out)
+        run_babeldoc(job_id, input_path, lang_out, lang_in)
     finally:
         with _activity_lock:
             _active_jobs -= 1
@@ -1655,6 +1846,8 @@ def pdf_translate():
 
     pages_spec = (request.form.get("pages") or "").strip()
     lang_out = request.form.get("lang_out") or user_config.get("target_lang", "zh")
+    # 源语言：留空则由任务线程从 PDF 正文自动检测，检测不出回退 en
+    lang_in = (request.form.get("lang_in") or "").strip()
     mode = request.form.get("mode", "mono")
     if mode not in ("mono", "dual"):
         mode = "mono"
@@ -1728,7 +1921,7 @@ def pdf_translate():
 
     t = threading.Thread(
         target=_run_pdf_job,
-        args=(job_id, input_path, lang_out),
+        args=(job_id, input_path, lang_out, lang_in),
         daemon=True,
     )
     t.start()
@@ -1997,8 +2190,12 @@ class _EpubBilingualizer(HTMLParser):
             self.out.append(f"<!--{data}-->")
 
 
-def _doc_translate_paras(paras, lang_out, progress_cb=None):
-    """逐段翻译；同语言段落原样返回；单段失败保留原文不中断任务。"""
+def _doc_translate_paras(paras, lang_out, progress_cb=None, source_lang=None):
+    """逐段翻译；同语言段落原样返回；单段失败保留原文不中断任务。
+
+    source_lang：文档级源语言（上传时指定或从正文自动检测）。纯汉字日文
+    段落靠它才不会被误判成中文而跳过。
+    """
     results = []
     total = len(paras)
     for i, p in enumerate(paras, 1):
@@ -2006,7 +2203,7 @@ def _doc_translate_paras(paras, lang_out, progress_cb=None):
         if not p:
             results.append(p)
             continue
-        if is_same_language(p, lang_out):
+        if is_same_language(p, lang_out, source_lang):
             results.append(p)
         else:
             try:
@@ -2019,7 +2216,7 @@ def _doc_translate_paras(paras, lang_out, progress_cb=None):
     return results
 
 
-def _run_doc_job(job_id, input_path, lang_out):
+def _run_doc_job(job_id, input_path, lang_out, source_lang=None):
     """文档翻译任务线程：解析 -> 逐段翻译 -> 组装产物。跑着的时候看门狗不许退出。"""
     global _active_jobs
     with _activity_lock:
@@ -2042,7 +2239,9 @@ def _run_doc_job(job_id, input_path, lang_out):
             with open(input_path, encoding="utf-8", errors="replace") as f:
                 raw = f.read()
             paras = _doc_split_paragraphs(raw)
-            translated = _doc_translate_paras(paras, lang_out, cb)
+            if not source_lang:
+                source_lang = detect_source_language(raw)
+            translated = _doc_translate_paras(paras, lang_out, cb, source_lang)
             lines = []
             for orig, tr in zip(paras, translated):
                 if mode == "mono":
@@ -2061,7 +2260,9 @@ def _run_doc_job(job_id, input_path, lang_out):
             cues = _doc_parse_srt(raw)
             if not cues:
                 raise ValueError("SRT 中未解析到任何字幕块")
-            translated = _doc_translate_paras([c["text"] for c in cues], lang_out, cb)
+            if not source_lang:
+                source_lang = detect_source_language(" ".join(c["text"] for c in cues))
+            translated = _doc_translate_paras([c["text"] for c in cues], lang_out, cb, source_lang)
             lines = []
             for i, (c, tr) in enumerate(zip(cues, translated), 1):
                 lines.append(str(i))
@@ -2083,7 +2284,9 @@ def _run_doc_job(job_id, input_path, lang_out):
             cues = _doc_parse_ass(raw)
             if not cues:
                 raise ValueError("ASS 中未解析到任何 Dialogue 行")
-            translated = _doc_translate_paras([c["text"] for c in cues], lang_out, cb)
+            if not source_lang:
+                source_lang = detect_source_language(" ".join(c["text"] for c in cues))
+            translated = _doc_translate_paras([c["text"] for c in cues], lang_out, cb, source_lang)
             lines = []
             for c, tr in zip(cues, translated):
                 body = tr if tr.strip() else c["text"]
@@ -2097,7 +2300,7 @@ def _run_doc_job(job_id, input_path, lang_out):
                 f.write("\n".join(lines))
 
         elif kind == "epub":
-            out_path = _doc_epub_translate(input_path, job, lang_out, mode)
+            out_path = _doc_epub_translate(input_path, job, lang_out, mode, source_lang)
 
         job["status"] = "completed"
         job["progress"] = "完成"
@@ -2112,7 +2315,7 @@ def _run_doc_job(job_id, input_path, lang_out):
             _active_jobs -= 1
 
 
-def _doc_epub_translate(src_path, job, lang_out, mode):
+def _doc_epub_translate(src_path, job, lang_out, mode, lang_in=None):
     """解包 EPUB -> 逐 xhtml 双语重写 -> 重打包（mimetype 保持第一项且不压缩）。"""
     import zipfile as _z
 
@@ -2125,8 +2328,10 @@ def _doc_epub_translate(src_path, job, lang_out, mode):
     if not html_names:
         raise ValueError("EPUB 中未找到任何 xhtml/html 内容文件")
 
-    # 粗略预扫段落数（用于进度显示），script/style 内不计
+    # 粗略预扫段落数（用于进度显示），script/style 内不计；
+    # 顺便攒一份纯文本样本，用于未指定源语言时的自动检测
     paras_total = 0
+    sample_parts = []
     for name in html_names:
         with _z.ZipFile(src_path) as z:
             data = z.read(name)
@@ -2135,11 +2340,17 @@ def _doc_epub_translate(src_path, job, lang_out, mode):
         except UnicodeDecodeError:
             text = data.decode("utf-8", errors="replace")
         paras_total += len(re.findall(r"<(?:p|li|blockquote|h[1-6])[\s>]", text, re.I))
+        if not lang_in and len(sample_parts) < 20:
+            sample_parts.append(re.sub(r"<[^>]+>", " ", text))
+
+    if not lang_in:
+        lang_in = detect_source_language(" ".join(sample_parts))
+        logger.info(f"EPUB 源语言自动检测: {lang_in or '未知(拉丁语系或无法判定)'}")
 
     done = [0]
 
     def translate(text):
-        if is_same_language(text, lang_out):
+        if is_same_language(text, lang_out, lang_in):
             return text
         try:
             tr = _infer_translate(text, lang_out)
@@ -2190,7 +2401,8 @@ def doc_translate():
     """
     上传 TXT / SRT / ASS / EPUB 并翻译（任务式，同 PDF 流程）。
 
-    form 字段：file（必填）、lang_out（可选，默认配置）、mode（mono|dual）
+    form 字段：file（必填）、lang_out（可选，默认配置）、mode（mono|dual）、
+              lang_in（可选，源语言；留空则从正文自动检测）
     """
     if llm is None:
         return jsonify({"error": "Model not loaded"}), 503
@@ -2207,6 +2419,8 @@ def doc_translate():
         return jsonify({"error": f"暂不支持的文件类型 .{ext}（支持 txt / srt / ass / epub）"}), 400
 
     lang_out = request.form.get("lang_out") or user_config.get("target_lang", "zh")
+    # 源语言：留空则由任务线程从正文自动检测
+    lang_in = (request.form.get("lang_in") or "").strip()
     mode = request.form.get("mode", "dual")
     if mode not in ("mono", "dual"):
         mode = "dual"
@@ -2229,7 +2443,7 @@ def doc_translate():
 
     t = threading.Thread(
         target=_run_doc_job,
-        args=(job_id, input_path, lang_out),
+        args=(job_id, input_path, lang_out, lang_in),
         daemon=True,
     )
     t.start()

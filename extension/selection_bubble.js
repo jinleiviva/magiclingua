@@ -135,6 +135,7 @@
                 action: 'translate',
                 text,
                 targetLanguage: (config && config.targetLanguage) || 'Chinese',
+                sourceLang: document.documentElement.lang || '',
                 priority: 'high'
             },
             (resp) => {

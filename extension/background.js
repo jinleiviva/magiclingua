@@ -388,7 +388,12 @@ function handleTranslateRequest(request, sendResponse) {
             const activeGlossary = getActiveGlossary(config);
             const glossaryKey = Object.keys(activeGlossary).length
                 ? hashString(JSON.stringify(activeGlossary)) : '';
-            const cacheKey = `${request.text}|${request.targetLanguage}|${contextKey}|${glossaryKey}`;
+            // source_lang 参与缓存 key：页面语言变化后旧译文自动失效。
+            // （2026-09-10）修复「日文被判为中文而跳过」时，旧缓存里存的是
+            // 未翻译的日文原文，换 key 后自然 miss，无需用户手动清缓存。
+            const sourceKey = request.sourceLang
+                ? hashString(String(request.sourceLang).toLowerCase()) : '';
+            const cacheKey = `${request.text}|${request.targetLanguage}|${contextKey}|${glossaryKey}|${sourceKey}`;
 
             if (translationCache.has(cacheKey)) {
                 sendResponse({ success: true, translation: translationCache.get(cacheKey) });
@@ -480,6 +485,10 @@ async function callTranslateService(request, cacheKey) {
         target_lang: langNameToCode(request.targetLanguage || config.targetLanguage),
         stream: false
     };
+
+    // 页面声明的源语言（<html lang="ja">）。比字符集推断可靠，服务端据此
+    // 直接裁决是否需要翻译，避免纯汉字日文词被误判为「已是中文」而跳过。
+    if (request.sourceLang) body.source_lang = request.sourceLang;
 
     // YouTube 字幕带上前一句作上下文，能明显减少断句误译
     if (request.context) body.context = request.context;

@@ -483,6 +483,7 @@ class UniversalCore {
                 action: 'translate',
                 text: cleanText,
                 targetLanguage: this.config.targetLanguage,
+                sourceLang: (document.documentElement && document.documentElement.lang) || '',
                 context: context,
                 priority: options.priority || 'normal'
             });
@@ -501,6 +502,17 @@ class UniversalCore {
         return null;
     }
 
+    /**
+     * 源语言是否与目标语言一致（一致则跳过翻译）。
+     *
+     * 历史坑（2026-09-10）：旧实现只统计汉字占比，日文「汉字+假名混写」的
+     * 汉字占比同样很高，被误判为「已是中文」而跳过，页面上译文块装的还是
+     * 日文。目标为英文时同理，法/德/西/越等拉丁语系与中英混排文本全被跳过。
+     *
+     * 修正原则：字符集只能证明「不是」某语言，不能证明「是」。改为敌对字符
+     * 排除法——出现不可能属于目标语言的字符就一律不跳过。拿不准就翻。
+     * 与服务端 server_gguf.py is_same_language 保持一致。
+     */
     isSameLanguage(text, targetLang) {
         if (!text || !targetLang) return false;
 
@@ -508,24 +520,60 @@ class UniversalCore {
         const isTargetChinese = lang.includes('zh') || lang.includes('chinese');
         const isTargetEnglish = lang.includes('en') || lang.includes('english');
 
-        // Remove spaces and punctuation for density calculation
-        const stripped = text.replace(/[\s\p{P}]/gu, '');
-        if (stripped.length === 0) return false;
+        // 页面声明的源语言（<html lang="ja">）比字符集推断可靠得多：
+        // 目标中文但页面不是中文页、目标英文但页面不是英文页 -> 必须翻译。
+        // 这一层用语言名（Chinese）也能生效，不需要换算成语言码。
+        const pageCode = this._langBase(
+            (document.documentElement && document.documentElement.lang) || ''
+        );
+        if (pageCode) {
+            if (isTargetChinese && pageCode !== 'zh') return false;
+            if (isTargetEnglish && pageCode !== 'en') return false;
+        }
+
+        // 只保留字母类字符（含汉字、假名、谚文等），剔除空白、数字、标点、符号
+        const letters = text.replace(/[^\p{L}]/gu, '');
+        if (letters.length === 0) return false;
+
+        // 既非汉字、也非拉丁字母的文种：假名 / 谚文 / 西里尔 / 希腊 / 阿拉伯 /
+        // 希伯来 / 泰文 / 天城文
+        const nonHanNonLatin = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Thai}\p{Script=Devanagari}]/u;
+        // 带变音符号的拉丁字母（é ü ñ ß ø ł ř ş ğ ı ơ ư …）
+        const latinExt = /[\u00C0-\u024F]/u;
 
         if (isTargetChinese) {
-            // Check for Chinese characters
-            const matches = stripped.match(/[\u4e00-\u9fa5]/g);
-            const count = matches ? matches.length : 0;
-            return (count / stripped.length) > 0.3;
+            // 出现假名/谚文等 -> 一定不是中文（专门挡住「日文被当成中文」）
+            if (nonHanNonLatin.test(letters)) return false;
+            const count = (letters.match(/\p{Script=Han}/gu) || []).length;
+            return (count / letters.length) > 0.3;
         }
 
         if (isTargetEnglish) {
-            const matches = stripped.match(/[a-zA-Z]/g);
-            const count = matches ? matches.length : 0;
-            return (count / stripped.length) > 0.5;
+            // 出现任何非拉丁文种（含汉字）-> 不是英文
+            if (nonHanNonLatin.test(letters)) return false;
+            if (/\p{Script=Han}/u.test(letters)) return false;
+            // 出现带变音符的拉丁字母 -> 大概率是法/德/西/越/土/波/捷等
+            if (latinExt.test(letters)) return false;
+            const count = (letters.match(/[a-zA-Z]/g) || []).length;
+            return (count / letters.length) > 0.6;
         }
 
+        // 其余目标语言不做跳过判定，宁可多跑推理也不误跳过
         return false;
+    }
+
+    /** 语言码取主码并归并变体：zh-Hant -> zh，en-US -> en，jp -> ja。 */
+    _langBase(code) {
+        const alias = {
+            'zh-hans': 'zh', 'zh-hant': 'zh', 'zh-cn': 'zh', 'zh-sg': 'zh',
+            'zh-tw': 'zh', 'zh-hk': 'zh', 'zh-mo': 'zh',
+            'en-us': 'en', 'en-gb': 'en', 'en-au': 'en', 'en-ca': 'en',
+            'jp': 'ja', 'kr': 'ko', 'pt-br': 'pt'
+        };
+        const c = (code || '').trim().toLowerCase().replace(/_/g, '-');
+        if (!c) return '';
+        if (Object.prototype.hasOwnProperty.call(alias, c)) return alias[c];
+        return c.split('-')[0];
     }
 
     // --- UI Helpers ---
